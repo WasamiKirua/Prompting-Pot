@@ -1,0 +1,20 @@
+[
+  {
+    "id": "GemmaUnseen",
+    "name": "Gemma Unseen Prompt From Img (NSFW)",
+    "config": "unseen.yaml",
+    "vision": true
+  },
+  {
+    "id": "Captioning",
+    "name": "Qwen3.5 Captioning (NSFW)",
+    "config": "caption.yaml",
+    "vision": true
+  },
+  {
+    "id": "Fibo",
+    "name": "Fibo Scene Analyzer (Ideogram 4)",
+    "config": "fibo.yaml",
+    "vision": true
+  }
+]

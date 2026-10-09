@@ -1,0 +1,22 @@
+healthCheckTimeout: 300
+logLevel: info
+includeAliasesInList: true
+logToStdout: "proxy"
+startPort: 10001
+sendLoadingState: true
+globalTTL: 5800
+
+macros:
+  models_dir: /mnt/llm/models
+  flash_att: "--flash-attn on"
+  kv_quant_big: "--cache-type-k q8_0 --cache-type-v q4_0"
+  rtx5060: "--split-mode none --main-gpu 1"
+  rtx5090: "--split-mode none --main-gpu 0"
+
+models:
+  Captioning:
+    cmd: |
+      llama-server --port ${PORT} ${rtx5060} --model ${models_dir}/Captioning_NSFW/qwen3.5-9b-nsfw-captioning-v5.Q8_0.gguf -ngl 99 -c 8648 --cache-type-k f16 --cache-type-v f16
+      --keep 4096 --n-predict 1024 --temp 1 --presence-penalty 1.5 --mmproj ${models_dir}/Captioning_NSFW/mmproj-F16.gguf
+    aliases:
+      - "9B_NSFW"

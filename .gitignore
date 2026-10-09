@@ -1,0 +1,45 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local container settings; keep the distributable example.
+.env
+.env.*
+!.env.example
+
+# Tool caches and logs can contain local paths or request details.
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+
+# Private keys, certificates with keys, and local data stores.
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+id_ecdsa
+*.sqlite
+*.sqlite3
+*.db
+
+# Keep weights and private input/output/evaluation artifacts out of Git.
+*.gguf
+*.safetensors
+/models/
+/private/
+/uploads/
+/outputs/
+/evaluation-results/
+/audit-reports/

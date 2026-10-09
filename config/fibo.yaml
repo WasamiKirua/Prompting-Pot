@@ -1,0 +1,22 @@
+healthCheckTimeout: 300
+logLevel: info
+includeAliasesInList: true
+logToStdout: "proxy"
+startPort: 10001
+sendLoadingState: true
+globalTTL: 5800
+
+macros:
+  models_dir: /mnt/llm/models
+  flash_att: "--flash-attn on"
+  kv_quant_big: "--cache-type-k q8_0 --cache-type-v q4_0"
+  rtx5060: "--split-mode none --main-gpu 1"
+  rtx5090: "--split-mode none --main-gpu 0"
+
+models:
+  Fibo:
+    cmd: |
+      llama-server --port ${PORT} ${rtx5090} --model ${models_dir}/Fibo/fibo-scene-analyzer_Q4_K_M.gguf --mmproj ${models_dir}/Fibo/mmproj-F16-fibo.gguf --jinja
+      --chat-template-file ${models_dir}/Fibo/chat_template.jinja --special --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.00
+    aliases:
+      - "Qwen36_35B_A3B"

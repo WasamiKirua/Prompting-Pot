@@ -1,0 +1,21 @@
+healthCheckTimeout: 300
+logLevel: info
+includeAliasesInList: true
+logToStdout: "proxy"
+startPort: 10001
+sendLoadingState: true
+globalTTL: 5800
+
+macros:
+  models_dir: /mnt/llm/models
+  flash_att: "--flash-attn on"
+  kv_quant_big: "--cache-type-k q8_0 --cache-type-v q4_0"
+  rtx5060: "--split-mode none --main-gpu 1"
+  rtx5090: "--split-mode none --main-gpu 0"
+
+models:
+  GemmaUnseen:
+    cmd: |
+      llama-server --port ${PORT} ${rtx5090} --model ${models_dir}/GemmaUnseen/UNSEEN_Gemma_4_26B_NSFW_Q8_0.gguf -ngl 99 -c 4096 --mmproj ${models_dir}/GemmaUnseen/mmproj-gemma4-vision-f16.gguf
+    aliases:
+      - "26B_NSFW"

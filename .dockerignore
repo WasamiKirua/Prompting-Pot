@@ -1,0 +1,16 @@
+# Only ship application code, its lockfile and editable model configuration.
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!src/**
+!config/
+!config/*.yaml
+!config/*.yml
+!config/targets.json
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.env*

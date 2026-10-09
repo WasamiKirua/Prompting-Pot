@@ -1,0 +1,182 @@
+import importlib
+import json
+from io import BytesIO
+from zipfile import ZipFile
+
+import pytest
+from fastapi.testclient import TestClient
+from PIL import Image
+
+from prompting_pot.prompts import PROMPTS, TARGET_PROMPTS, build_prompt
+
+backend = importlib.import_module("prompting_pot.app")
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    (tmp_path / "targets.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "vision",
+                    "name": "Vision",
+                    "config": "vision.yaml",
+                    "vision": True,
+                },
+                {"id": "text", "name": "Text", "config": "text.yaml", "vision": False},
+            ]
+        )
+    )
+    monkeypatch.setattr(backend, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(backend, "CAPTION_MODEL_ID", "vision")
+
+    async def ready(target):
+        return "http://localhost:8080/v1"
+
+    monkeypatch.setattr(backend, "ensure_llama_swap", ready)
+    return TestClient(backend.app)
+
+
+def png():
+    buffer = BytesIO()
+    Image.new("RGB", (2, 2)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def files(*names):
+    return [("images", (name, png(), "image/png")) for name in names]
+
+
+def test_caption_zip_and_skip(client, monkeypatch):
+    calls = []
+
+    async def start(target):
+        calls.append("start")
+        return "http://localhost:8080/v1"
+
+    async def infer(**kwargs):
+        assert kwargs["mode"] == "caption"
+        assert kwargs["prompt"] == PROMPTS["caption"]
+        assert kwargs["description"] == "Caption this image following the system instructions."
+        assert kwargs["image_content_type"] == "image/png"
+        calls.append("infer")
+        return "  A tiny café.  "
+
+    monkeypatch.setattr(backend, "ensure_llama_swap", start)
+    monkeypatch.setattr(backend, "generate_prompt", infer)
+    response = client.post(
+        "/api/caption",
+        data={"target_id": "vision", "existing_captions": '["kept.txt"]'},
+        files=files("kept.png", "new.png", "other.png"),
+    )
+    assert response.status_code == 200
+    assert response.headers["X-captioned"] == "2"
+    assert response.headers["X-skipped"] == "1"
+    assert calls == ["start", "infer", "infer"]
+    with ZipFile(BytesIO(response.content)) as archive:
+        assert set(archive.namelist()) == {
+            "new.txt",
+            "other.txt",
+            "caption-manifest.json",
+        }
+        assert archive.read("new.txt").decode("utf-8") == "A tiny café.\n"
+        manifest = json.loads(archive.read("caption-manifest.json"))
+        assert manifest["counts"] == {"captioned": 2, "skipped": 1, "failed": 0}
+
+
+def test_all_skipped_without_starting_model(client):
+    response = client.post(
+        "/api/caption",
+        data={"target_id": "vision", "existing_captions": '["IMAGE.TXT"]'},
+        files=files("image.png"),
+    )
+    assert response.status_code == 200
+    assert response.headers["X-skipped"] == "1"
+
+
+def test_caption_inference_failure_is_reported(client, monkeypatch):
+    async def infer(**kwargs):
+        raise RuntimeError("Caption model unavailable")
+
+    monkeypatch.setattr(backend, "generate_caption", infer)
+    response = client.post(
+        "/api/caption", data={"target_id": "vision"}, files=files("image.png")
+    )
+    assert response.status_code == 200
+    assert response.headers["X-failed"] == "1"
+    with ZipFile(BytesIO(response.content)) as archive:
+        manifest = json.loads(archive.read("caption-manifest.json"))
+        assert manifest["files"][0]["error"] == "Caption model unavailable"
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("../image.png",),
+        ("folder/image.png",),
+        ("bad.gif",),
+        ("photo.jpg", "photo.png"),
+        ("PHOTO.png", "photo.png"),
+    ],
+)
+def test_unsafe_or_ambiguous_names(client, names):
+    response = client.post(
+        "/api/caption", data={"target_id": "vision"}, files=files(*names)
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("existing", ["not json", "{}", "[1]", '["../image.txt"]'])
+def test_invalid_existing_names(client, existing):
+    response = client.post(
+        "/api/caption",
+        data={"target_id": "vision", "existing_captions": existing},
+        files=files("image.png"),
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("target", ["missing", "text"])
+def test_caption_requires_vision(client, target):
+    response = client.post(
+        "/api/caption", data={"target_id": target}, files=files("image.png")
+    )
+    assert response.status_code == 422
+
+
+def test_invalid_image_and_json_output_reported_per_file(client, monkeypatch):
+    async def start(target):
+        return "http://localhost:8080/v1"
+
+    async def infer(**kwargs):
+        return {"caption": "not plain text"}
+
+    monkeypatch.setattr(backend, "ensure_llama_swap", start)
+    monkeypatch.setattr(backend, "generate_prompt", infer)
+    response = client.post(
+        "/api/caption",
+        data={"target_id": "vision"},
+        files=[("images", ("bad.png", b"bad", "image/png")), *files("valid.png")],
+    )
+    assert response.status_code == 200
+    assert response.headers["X-failed"] == "2"
+    with ZipFile(BytesIO(response.content)) as archive:
+        assert archive.namelist() == ["caption-manifest.json"]
+
+
+def test_batch_image_count_limit(client):
+    response = client.post(
+        "/api/caption",
+        data={"target_id": "vision"},
+        files=files(*(f"{i}.png" for i in range(101))),
+    )
+    assert response.status_code == 422
+
+
+def test_prompt_overrides_preserve_json_braces(monkeypatch):
+    monkeypatch.setitem(
+        TARGET_PROMPTS, "json-model", {"text": '{"prompt": "{description}"}'}
+    )
+    assert build_prompt("json-model", "text", "a flower") == '{"prompt": "a flower"}'
+    assert build_prompt("other", "text", "a flower").endswith("a flower")
+    assert build_prompt("json-model", "caption") == PROMPTS["caption"]
