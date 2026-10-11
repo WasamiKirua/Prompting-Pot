@@ -105,29 +105,41 @@ test('image generation sends local model, image-generator target and changes sep
   assert.equal(element('clear-output').disabled, false);
 });
 
-test('caption mode shows and auto-selects only its allowed model, then restores the prompt model', () => {
+test('caption mode offers both models, defaults to Qwen and remembers Gemma independently', () => {
   const { element, context } = setup();
-  vm.runInContext("targets = [{id: 'GemmaUnseen', name: 'Gemma Unseen', vision: true, captioning: false}, {id: 'Captioning', name: 'Qwen3.5 Captioning (NSFW)', vision: true, captioning: true}]", context);
+  vm.runInContext("targets = [{id: 'GemmaUnseen', name: 'Gemma Unseen', vision: true, captioning: true}, {id: 'Captioning', name: 'Qwen3.5 Captioning (NSFW)', vision: true, captioning: true}]", context);
   element('target').value = 'GemmaUnseen';
   element('target').onchange();
   element('mode-caption').onclick();
-  assert.deepEqual(element('target').options.map(option => option.value), ['Captioning']);
+  assert.deepEqual(element('target').options.map(option => option.value), ['GemmaUnseen', 'Captioning']);
   assert.equal(element('target').value, 'Captioning');
-  assert.equal(element('target').options[0].text, 'Qwen3.5 Captioning (NSFW)');
-  assert.equal(element('target').disabled, true);
+  assert.equal(element('target').disabled, false);
+  element('target').value = 'GemmaUnseen'; element('target').onchange();
   element('mode-image').onclick();
   assert.equal(element('target').value, 'GemmaUnseen');
   assert.ok(element('target').options.some(option => option.value === 'GemmaUnseen'));
+  element('mode-caption').onclick();
+  assert.equal(element('target').value, 'GemmaUnseen');
 });
 
-test('caption mode never falls back to Gemma when its required model is missing', () => {
+test('caption mode offers Gemma when Qwen is not configured', () => {
+  const { element, context } = setup();
+  vm.runInContext("targets = [{id: 'GemmaUnseen', name: 'Gemma Unseen', vision: true, captioning: true}]", context);
+  element('mode-caption').onclick();
+  assert.deepEqual(element('target').options.map(option => option.value), ['GemmaUnseen']);
+  assert.equal(element('target').value, 'GemmaUnseen');
+  assert.equal(element('target').disabled, false);
+  assert.equal(element('generate').disabled, false);
+});
+
+test('caption mode disables generation when neither caption model is eligible', () => {
   const { element, context } = setup();
   vm.runInContext("targets = [{id: 'GemmaUnseen', name: 'Gemma Unseen', vision: true, captioning: false}]", context);
   element('mode-caption').onclick();
   assert.equal(element('target').value, '');
   assert.deepEqual(element('target').options.map(option => option.value), ['']);
   assert.equal(element('generate').disabled, true);
-  assert.match(element('capability').textContent, /Configure the Captioning model/);
+  assert.match(element('capability').textContent, /Configure Qwen3.5 Captioning or GemmaUnseen/);
 });
 
 for (const generator of ['krea2', 'zimage', 'flux2-klein', 'anima']) {
@@ -332,16 +344,34 @@ test('caption folder selection includes BMP and ignores hidden files and subfold
   assert.match(element('folder-summary').textContent, /1 top-level images · 1 existing captions/);
 });
 
+test('folder upload accepts 150 images and rejects 151 before uploading', async () => {
+  for (const count of [150, 151]) {
+    let uploaded = false;
+    const { element, context } = setup(url => {
+      if (url !== '/api/caption') return new Promise(() => {});
+      uploaded = true;
+      return Promise.resolve({ok: true, blob: async () => new Blob(['zip']), headers: {get: () => '0'}});
+    });
+    vm.runInContext("mode = 'caption'; targets = [{id: 'Captioning', vision: true, captioning: true}]", context);
+    element('target').value = 'Captioning'; element('trigger-word').value = 'TOK';
+    element('folder').files = Array.from({length: count}, (_, i) => Object.assign(new Blob(['image']), {name: `${i}.png`, webkitRelativePath: `dataset/${i}.png`}));
+    element('folder').onchange();
+    await element('form').onsubmit(event());
+    assert.equal(uploaded, count === 150);
+    if (count === 151) assert.match(element('status').textContent, /1–150/);
+  }
+});
+
 test('caption requests send style and trigger, and expose the ZIP download', async () => {
-  for (const style of ['character', 'style']) {
+  for (const [style, model] of [['character', 'Captioning'], ['style', 'Captioning'], ['character', 'GemmaUnseen'], ['style', 'GemmaUnseen']]) {
     let request;
     const { element, context } = setup((url, options) => {
       if (url !== '/api/caption') return new Promise(() => {});
       request = options;
       return Promise.resolve({ ok: true, blob: async () => new Blob(['zip']), headers: { get: () => '1' } });
     });
-    vm.runInContext("mode = 'caption'; targets = [{id: 'Captioning', vision: true, captioning: true}]", context);
-    element('target').value = 'Captioning';
+    vm.runInContext("mode = 'caption'; targets = [{id: 'Captioning', vision: true, captioning: true}, {id: 'GemmaUnseen', vision: true, captioning: true}]", context);
+    element('target').value = model;
     element('caption-style').value = style;
     element('trigger-word').value = '  alex cooper  ';
     element('folder').files = [Object.assign(new Blob(['image'], { type: 'image/bmp' }), { name: 'image.bmp', webkitRelativePath: 'dataset/image.bmp' })];
@@ -349,7 +379,7 @@ test('caption requests send style and trigger, and expose the ZIP download', asy
     await element('form').onsubmit(event());
     assert.equal(request.body.get('caption_style'), style);
     assert.equal(request.body.get('trigger_word'), 'alex cooper');
-    assert.equal(request.body.get('target_id'), 'Captioning');
+    assert.equal(request.body.get('target_id'), model);
     assert.equal(request.body.get('images').name, 'image.bmp');
     assert.equal(element('download').hidden, false);
   }

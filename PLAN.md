@@ -125,6 +125,24 @@
 - [x] Verify typing/lint and unchanged lifecycle/YAML checksums.
 - [ ] User: evaluate tag quality and exact trigger adherence with real model images.
 
+## Folder batch limit: 150 images
+- [x] Raise backend/frontend limit to 150; retain 100 MB total and 10 MB per image.
+- [x] Update UI, README and cache version; test acceptance at 150 and rejection at 151.
+
+## Folder batch limit: 130 images
+- [x] Raise backend/frontend image-count limit to 130; retain 100 MB total and 10 MB per image.
+- [x] Update UI/help, README and script cache version; test acceptance at 130 and rejection at 131.
+
+## GemmaUnseen Krea2 folder captions
+- [x] Add registered vision-capable GemmaUnseen alongside Qwen3.5; keep Qwen as the default when available.
+- [x] Reuse the model-independent Character/Style prose prompts and required trigger validation without duplicating templates.
+- [x] Route Gemma through its existing multimodal adapter with reasoning off; leave Qwen server defaults unchanged.
+- [x] Enable model selection and remember the caption choice independently of single-image workflows.
+- [x] Verify both models/types with BMP, skipping, ZIP sidecars, invalid-prefix handling and vision restrictions: 199 backend + 31 frontend tests pass.
+- [x] Check model choice, both Gemma caption types, download and mode round trips in Chromium with mocked inference.
+- [x] Update README and script cache version; leave YAMLs, registry and lifecycle source unchanged.
+- [ ] Real-model caption quality/performance comparisons remain unverified.
+
 ## Krea2-only folder LoRA captions
 - [x] Recover the 35 missing tracked files from the latest commit with explicit approval; remove the obsolete checkout after making a private temporary recovery archive.
 - [x] Restrict folder captioning to Qwen3.5 and Krea2 Character/Style modes; require a single-line trigger for both.

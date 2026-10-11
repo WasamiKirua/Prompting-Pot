@@ -111,6 +111,12 @@ async def generate_prompt(
     if mode == "caption":
         if image is None or image_content_type is None:
             raise ValueError("Captioning requires an image.")
+        if target.id == "GemmaUnseen":
+            return await generate_from_image(
+                base_url=base_url, model=target.id, system_prompt=prompt,
+                description=description, image=image, content_type=image_content_type,
+                image_generator="krea2",
+            )
         return await generate_caption(
             base_url=base_url, model=target.id, system_prompt=prompt,
             instruction=description, image=image, content_type=image_content_type,
@@ -139,7 +145,7 @@ async def index():
 @app.get("/api/targets")
 async def get_targets():
     return [{"id": t.id, "name": t.name, "vision": t.vision,
-             "captioning": t.id == CAPTION_MODEL_ID and t.vision,
+             "captioning": t.id in {CAPTION_MODEL_ID, "GemmaUnseen"} and t.vision,
              "image_generators": supported_image_generators(t),
              "analysis_only": t.id in {"Fibo", CAPTION_MODEL_ID}, "text": t.id != "Fibo"} for t in load_targets()]
 
@@ -209,8 +215,8 @@ async def caption_folder(
 ) -> Response:
     """Caption uploaded images; return a ZIP, never write to a client-supplied path."""
     target = next((t for t in load_targets() if t.id == target_id), None)
-    if target is None or target.id != CAPTION_MODEL_ID or not target.vision:
-        raise HTTPException(422, "Captioning requires the registered Qwen3.5 Captioning model (Captioning).")
+    if target is None or target.id not in {CAPTION_MODEL_ID, "GemmaUnseen"} or not target.vision:
+        raise HTTPException(422, "Captioning requires registered Qwen3.5 Captioning (Captioning) or GemmaUnseen with vision support.")
     if caption_style not in FOLDER_CAPTION_STYLES:
         raise HTTPException(422, "Krea2 folder captioning supports Character or Style only.")
     if not trigger_word.strip() or '\n' in trigger_word or '\r' in trigger_word:

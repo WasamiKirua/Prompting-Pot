@@ -188,11 +188,26 @@ def test_invalid_image_and_json_output_reported_per_file(client, monkeypatch):
         assert archive.namelist() == ["caption-manifest.json"]
 
 
+def test_batch_accepts_150_images(client):
+    names = [f"{i}.png" for i in range(150)]
+    response = client.post(
+        "/api/caption",
+        data={
+            "target_id": "vision",
+            "trigger_word": "TOK",
+            "existing_captions": json.dumps([f"{i}.txt" for i in range(150)]),
+        },
+        files=files(*names),
+    )
+    assert response.status_code == 200
+    assert response.headers["X-skipped"] == "150"
+
+
 def test_batch_image_count_limit(client):
     response = client.post(
         "/api/caption",
         data={"target_id": "vision", "trigger_word": "TOK"},
-        files=files(*(f"{i}.png" for i in range(101))),
+        files=files(*(f"{i}.png" for i in range(151))),
     )
     assert response.status_code == 422
 

@@ -152,7 +152,7 @@ Current entries:
 
 | Registry ID | YAML | Supported workflow |
 |---|---|---|
-| `GemmaUnseen` | `unseen.yaml` | Single-image prompts for Krea2, Z-Image, FLUX.2 Klein, Anima and Qwen-Image-2.1 |
+| `GemmaUnseen` | `unseen.yaml` | Krea2 folder training captions and single-image prompts for Krea2, Z-Image, FLUX.2 Klein, Anima and Qwen-Image-2.1 |
 | `Captioning` | `caption.yaml` | Krea2 folder training captions and single-image Qwen-Image-2.1 text / Ideogram 4 JSON |
 | `Fibo` | `fibo.yaml` | Single-image Ideogram workflow, using native Fibo JSON |
 
@@ -228,10 +228,10 @@ If a required model is missing, generation is disabled instead of silently choos
 
 ### Caption a folder
 
-Folder captioning is exclusively for **Krea2 LoRA training** and automatically selects only **Qwen3.5 Captioning (NSFW)**. Choose **Character** or **Style**, supply a required trigger word, then select a folder through the browser. Both types use natural sentences, never comma-separated tags. The model selector is locked in this mode.
+Folder captioning is exclusively for **Krea2 LoRA training**. Choose **Qwen3.5 Captioning (NSFW)** (the default) or **GemmaUnseen**, then **Character** or **Style**, supply a required trigger word, and select a folder through the browser. Both models use the same natural-sentence training rules, never comma-separated tags. Your caption-model choice is remembered independently of the single-image model while the page stays open. If only one eligible model is configured, it is selected automatically.
 
 - Top-level PNG/JPEG/WebP/BMP images only; hidden files and subfolders are ignored.
-- Maximum **100 images**, **100 MB total**, **10 MB per image**.
+- Maximum **150 images**, **100 MB total**, **10 MB per image**.
 - Images are processed sequentially; the model starts/reuses once for the batch.
 - Both types write `.txt` sidecars and skip matching existing `.txt` captions. `.json` files in the selected folder are ignored.
 - Existing caption contents are not uploaded—only filenames are sent for skipping.
@@ -267,6 +267,8 @@ Examples with trigger `TOK`:
 
 - **Character:** `TOK wears a blue cotton jacket and stands beside a wooden fence. Soft light falls from the left, with a garden in the background.`
 - **Style:** `TOK depicts a cat curled on a red cushion beside a window. Afternoon sunlight illuminates the cushion, and a potted plant stands behind it.`
+
+The two Character/Style templates are model-independent and shared by Qwen3.5 and GemmaUnseen, so their training rules cannot drift between models. Gemma uses its existing multimodal adapter with reasoning disabled; no separate generation-style breakdown is requested for captions.
 
 Both require a nonempty **single-line trigger**, up to **200 characters**; surrounding input whitespace is trimmed while spelling/case are preserved. Captions missing the exact trigger-space prefix are reported as per-image failures and are not written. Natural-prose adherence and the exclusion of fixed features are model instructions, not reliable semantic validators: review captions before training. Existing `.txt` captions are skipped without inspecting or rewriting their contents; move old tag captions aside if you want to recaption them.
 
@@ -396,7 +398,7 @@ All templates live in `src/prompting_pot/prompts.py`; external reference scripts
 
 | Path | Settings |
 |---|---|
-| Gemma image prompts (`gemma_unseen.py`) | Generator system prompt plus image/change instructions; temperature 0.7, 2000 output tokens, reasoning off, 300-second timeout |
+| Gemma image prompts / folder captions (`gemma_unseen.py`) | Generator or Krea2 LoRA system prompt plus image/instructions; temperature 0.7, 2000 output tokens, reasoning off, 300-second timeout |
 | Qwen text captions (`captioning.py`) | Image/instructions; generation settings left to the server, 300-second timeout |
 | Qwen Ideogram JSON | Same caption adapter; schema-constrained 4096-token request with reasoning off, 300-second timeout |
 | Fibo (`fibo.py`) | RGB PNG, image before `<caption><full>`, no system message; temperature 1.0, top_p 0.95, top_k 20, min_p 0, 4096 output tokens, direct answers, 3600-second timeout |
@@ -411,10 +413,10 @@ The async OpenAI SDK uses its compatible HTTP client with proxy environment vari
 
 Interactive documentation: `/docs`.
 
-- `GET /api/targets`: registered IDs/names with `vision`, `captioning`, `image_generators`, `analysis_only` and `text` workflow flags. Captioning is restricted to the registered `Captioning` model.
+- `GET /api/targets`: registered IDs/names with `vision`, `captioning`, `image_generators`, `analysis_only` and `text` workflow flags. Folder captioning accepts registered vision-capable `Captioning` and `GemmaUnseen` models only.
 - `GET /api/image-generators`: available generator IDs/display names, including `ideogram4`. The UI keeps the full generator list visible and filters the model dropdown; the backend checks model/generator compatibility.
 - `POST /api/generate`: multipart `target_id`, `mode` (`image` / `text`), `description`, plus required `image` and `image_generator` in image mode. Qwen/Fibo as-is single-image analysis rejects change instructions.
-- `POST /api/caption`: multipart `target_id` (`Captioning` only), repeated `images`, `existing_captions` (JSON list of flat `.txt` filenames), `caption_style` (`character`, the default, or `style`) and required `trigger_word`. Removed format IDs return 422 before startup. Returns a ZIP of `.txt` captions and the manifest, with `X-captioned`, `X-skipped` and `X-failed` headers.
+- `POST /api/caption`: multipart `target_id` (`Captioning` or `GemmaUnseen`, vision-capable only), repeated `images`, `existing_captions` (JSON list of flat `.txt` filenames), `caption_style` (`character`, the default, or `style`) and required `trigger_word`. Removed format IDs return 422 before startup. Returns a ZIP of `.txt` captions and the manifest, with `X-captioned`, `X-skipped` and `X-failed` headers.
 - Generation success: `{"output": "prompt text or serialized JSON"}` or `{"output": {"general": {}, "objects": []}}` for native structured output. These illustrate response shapes, not fabricated model results.
 - Errors use FastAPI's standard `detail` field; batch inference/image failures are recorded per image in the manifest.
 

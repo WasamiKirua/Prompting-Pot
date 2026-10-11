@@ -22,7 +22,7 @@ from .ideogram_caption import IDEOGRAM_CAPTION_SCHEMA, serialize_ideogram_captio
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_BATCH_BYTES = 100 * 1024 * 1024
-MAX_BATCH_IMAGES = 100
+MAX_BATCH_IMAGES = 150
 IMAGE_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -149,7 +149,7 @@ def caption_filename(filename: str) -> str:
 def validate_batch(images: list[UploadFile], existing: list[str]) -> None:
     """Reject ambiguous caption names and bound batch size before loading a model."""
     if not 1 <= len(images) <= MAX_BATCH_IMAGES:
-        raise HTTPException(422, "Select between 1 and 100 top-level images.")
+        raise HTTPException(422, "Select between 1 and 150 top-level images.")
     if any(
         PurePosixPath(name).suffix.lower() != ".txt"
         or any(c in name for c in "/\\\x00")

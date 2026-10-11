@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 let mode = 'image', targets = [], previewUrl = null, busy = false;
 let folderImages = [], existingCaptions = [], downloadUrl = null;
-let promptTarget = '', imageGenerators = [];
+let promptTarget = '', captionTarget = 'Captioning', imageGenerators = [];
 const captionImageExtension = /\.(png|jpe?g|webp|bmp)$/i;
 function generationLabel() { return mode === 'caption' ? 'Caption my folder ↗' : 'Grow my prompt ↗'; }
 function setTheme(theme) {
@@ -31,7 +31,7 @@ function renderTargetOptions() {
   $('target').replaceChildren();
   if (!automatic || !available.length) $('target').add(new Option(mode === 'caption' ? 'Captioning model not configured' : gemmaOnly ? 'GemmaUnseen model not configured' : fiboOnly ? 'Ideogram model not configured' : qwenChoice ? 'Qwen prompt model not configured' : 'Choose a local model', ''));
   available.forEach(t => $('target').add(new Option(t.name, t.id)));
-  $('target').value = fiboOnly || qwenChoice ? (available.some(t => t.id === promptTarget) ? promptTarget : available.find(t => t.id === (fiboOnly ? 'Fibo' : 'GemmaUnseen'))?.id || available[0]?.id || '') : automatic ? (available[0]?.id || '') : (available.some(t => t.id === promptTarget) ? promptTarget : '');
+  $('target').value = mode === 'caption' ? (available.some(t => t.id === captionTarget) ? captionTarget : available.find(t => t.id === 'Captioning')?.id || available[0]?.id || '') : fiboOnly || qwenChoice ? (available.some(t => t.id === promptTarget) ? promptTarget : available.find(t => t.id === (fiboOnly ? 'Fibo' : 'GemmaUnseen'))?.id || available[0]?.id || '') : automatic ? (available[0]?.id || '') : (available.some(t => t.id === promptTarget) ? promptTarget : '');
   if (gemmaOnly || fiboOnly || qwenChoice) promptTarget = $('target').value;
   renderImageGeneratorOptions();
 }
@@ -46,12 +46,12 @@ function renderImageGeneratorOptions() {
 }
 function updateTarget() {
   const target = targets.find(t => t.id === $('target').value && (mode !== 'caption' || t.captioning) && (!usesGemmaGenerator() || t.id === 'GemmaUnseen') && (!usesIdeogramGenerator() || ['Fibo', 'Captioning'].includes(t.id)) && (!usesQwenGenerator() || ['GemmaUnseen', 'Captioning'].includes(t.id)));
-  $('target').disabled = busy || mode === 'caption';
+  $('target').disabled = busy;
   const unsupported = target && (mode === 'text' ? target.text === false : !target.vision);
   const incompatible = mode === 'image' && target?.image_generators && !target.image_generators.includes($('image-generator').value);
   $('changes').disabled = busy || (mode === 'image' && !!target?.analysis_only);
   $('capability').textContent = mode === 'caption' && !targets.some(t => t.captioning)
-    ? 'Configure the Captioning model in config/targets.json to caption images.'
+    ? 'Configure Qwen3.5 Captioning or GemmaUnseen with vision support in config/targets.json to caption images.'
     : usesIdeogramGenerator() && !targets.some(t => ['Fibo', 'Captioning'].includes(t.id)) ? 'Configure Fibo or Qwen3.5 Captioning in config/targets.json to use Ideogram 4.'
     : usesQwenGenerator() && !targets.some(t => ['GemmaUnseen', 'Captioning'].includes(t.id)) ? 'Configure GemmaUnseen or Qwen3.5 Captioning to use Qwen-Image-2.1.'
     : usesGemmaGenerator() && !targets.some(t => t.id === 'GemmaUnseen') ? 'Configure GemmaUnseen in config/targets.json to use this image generator.'
@@ -127,7 +127,8 @@ dropArea.addEventListener('drop', event => {
 });
 $('preview').onerror = () => { clearImage(); status('This image cannot be previewed. Choose another file.', true); };
 $('target').onchange = () => {
-  if (mode !== 'caption') promptTarget = $('target').value;
+  if (mode === 'caption') captionTarget = $('target').value;
+  else promptTarget = $('target').value;
   renderImageGeneratorOptions();
   if (usesGemmaGenerator() || usesIdeogramGenerator() || usesQwenGenerator()) renderTargetOptions();
 };
@@ -166,7 +167,7 @@ $('form').onsubmit = async (event) => {
     if (!trigger || /[\r\n]/.test($('trigger-word').value) || $('trigger-word').value.length > 200) { status('Enter a single-line trigger word up to 200 characters.', true); return; }
     data.set('caption_style', style);
     data.set('trigger_word', trigger);
-    if (!folderImages.length || folderImages.length > 100) { status('Choose a folder with 1–100 top-level images.', true); return; }
+    if (!folderImages.length || folderImages.length > 150) { status('Choose a folder with 1–150 top-level images.', true); return; }
     if (folderImages.some(file => !file.size || file.size > 10 * 1024 * 1024) || folderImages.reduce((size, file) => size + file.size, 0) > 100 * 1024 * 1024) {
       status('Images must be nonempty, at most 10 MB each and 100 MB total.', true); return;
     }

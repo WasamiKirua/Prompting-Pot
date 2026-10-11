@@ -21,7 +21,9 @@ backend = importlib.import_module("prompting_pot.app")
 
 def completion(text="TOK wears a blue jacket beside a window."):
     return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=text))]
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content=text), finish_reason="stop")
+        ]
     )
 
 
@@ -39,6 +41,9 @@ def sdk(monkeypatch):
     context.__aexit__ = AsyncMock(side_effect=close)
     factory.return_value = context
     monkeypatch.setattr(captioning, "AsyncOpenAI", factory)
+    monkeypatch.setattr(
+        importlib.import_module("prompting_pot.gemma_unseen"), "AsyncOpenAI", factory
+    )
     return client, factory
 
 
@@ -179,7 +184,7 @@ def image(name="image.png", format="PNG"):
     )
 
 
-@pytest.mark.parametrize("model", ["GemmaUnseen", "Fibo"])
+@pytest.mark.parametrize("model", ["Fibo", "missing"])
 @pytest.mark.parametrize("style", ["character", "style"])
 def test_other_models_are_rejected_for_captioning(api, model, style):
     http, start, stop = api
@@ -194,17 +199,36 @@ def test_other_models_are_rejected_for_captioning(api, model, style):
     stop.assert_not_awaited()
 
 
+@pytest.mark.parametrize("model", ["Captioning", "GemmaUnseen"])
+def test_caption_models_require_vision(api, model):
+    http, start, _ = api
+    path = backend.CONFIG_DIR / "targets.json"
+    targets = json.loads(path.read_text())
+    next(target for target in targets if target["id"] == model)["vision"] = False
+    path.write_text(json.dumps(targets))
+    metadata = {target["id"]: target for target in http.get("/api/targets").json()}
+    assert metadata[model]["captioning"] is False
+    response = http.post(
+        "/api/caption",
+        data={"target_id": model, "trigger_word": "TOK"},
+        files=[image()],
+    )
+    assert response.status_code == 422
+    start.assert_not_awaited()
+
+
 def test_caption_model_metadata(api):
     http, _, _ = api
     models = {model["id"]: model for model in http.get("/api/targets").json()}
     assert models["Captioning"]["captioning"] is True
-    assert models["GemmaUnseen"]["captioning"] is False
+    assert models["GemmaUnseen"]["captioning"] is True
     assert models["Fibo"]["captioning"] is False
 
 
+@pytest.mark.parametrize("model", ["Captioning", "GemmaUnseen"])
 @pytest.mark.parametrize("style", ["character", "style"])
 @pytest.mark.parametrize("trigger", ["TOK", "Café O'Connor"])
-def test_endpoint_caption_types_skip_and_bmp(api, sdk, style, trigger):
+def test_endpoint_caption_types_skip_and_bmp(api, sdk, model, style, trigger):
     http, start, stop = api
     client, factory = sdk
     text = f"{trigger} wears a blue jacket beside a window. Soft light falls from the left."
@@ -212,7 +236,7 @@ def test_endpoint_caption_types_skip_and_bmp(api, sdk, style, trigger):
     response = http.post(
         "/api/caption",
         data={
-            "target_id": "Captioning",
+            "target_id": model,
             "caption_style": style,
             "trigger_word": f"  {trigger}  ",
             "existing_captions": '["kept.txt"]',
@@ -228,7 +252,19 @@ def test_endpoint_caption_types_skip_and_bmp(api, sdk, style, trigger):
     assert factory.call_args.kwargs["base_url"] == "http://custom-address:8080/v1"
     message = client.chat.completions.create.call_args.kwargs["messages"]
     assert message[0]["content"] == FOLDER_CAPTION_STYLES[style]
-    assert message[1]["content"][1]["text"] == build_caption_request(style, trigger)[1]
+    instruction_index = 0 if model == "GemmaUnseen" else 1
+    assert (
+        message[1]["content"][instruction_index]["text"]
+        == build_caption_request(style, trigger)[1]
+    )
+    request = client.chat.completions.create.call_args.kwargs
+    assert request["model"] == model
+    if model == "GemmaUnseen":
+        assert request["extra_body"] == {"reasoning": "off"}
+        assert request["max_tokens"] == 2000
+        assert request["temperature"] == 0.7
+    else:
+        assert set(request) == {"model", "messages"}
     with ZipFile(BytesIO(response.content)) as archive:
         assert "kept.txt" not in archive.namelist()
         assert archive.read("new.txt").decode("utf-8") == text + "\n"
@@ -279,10 +315,13 @@ def test_trigger_validation_before_startup(api, style, trigger):
     stop.assert_not_awaited()
 
 
+@pytest.mark.parametrize("model", ["Captioning", "GemmaUnseen"])
 @pytest.mark.parametrize(
     "invalid", ["", "Wrong wears a coat.", "TOKother wears a coat.", "TOK", "TOK   "]
 )
-def test_invalid_trigger_output_does_not_stop_remaining_images(api, sdk, invalid):
+def test_invalid_trigger_output_does_not_stop_remaining_images(
+    api, sdk, model, invalid
+):
     http, start, stop = api
     client, _ = sdk
     client.chat.completions.create.side_effect = [
@@ -291,7 +330,7 @@ def test_invalid_trigger_output_does_not_stop_remaining_images(api, sdk, invalid
     ]
     response = http.post(
         "/api/caption",
-        data={"target_id": "Captioning", "trigger_word": "TOK"},
+        data={"target_id": model, "trigger_word": "TOK"},
         files=[image("bad.png"), image("good.png")],
     )
     assert response.status_code == 200
