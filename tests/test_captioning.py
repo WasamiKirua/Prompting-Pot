@@ -7,7 +7,12 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from prompting_pot.prompts import PROMPTS, TARGET_PROMPTS, build_prompt
+from prompting_pot.prompts import (
+    FOLDER_CAPTION_STYLES,
+    TARGET_PROMPTS,
+    build_caption_request,
+    build_prompt,
+)
 
 backend = importlib.import_module("prompting_pot.app")
 
@@ -56,17 +61,21 @@ def test_caption_zip_and_skip(client, monkeypatch):
 
     async def infer(**kwargs):
         assert kwargs["mode"] == "caption"
-        assert kwargs["prompt"] == PROMPTS["caption"]
-        assert kwargs["description"] == "Caption this image following the system instructions."
+        assert kwargs["prompt"] == FOLDER_CAPTION_STYLES["character"]
+        assert kwargs["description"] == build_caption_request("character", "TOK")[1]
         assert kwargs["image_content_type"] == "image/png"
         calls.append("infer")
-        return "  A tiny café.  "
+        return "  TOK stands beside a tiny café.  "
 
     monkeypatch.setattr(backend, "ensure_llama_swap", start)
     monkeypatch.setattr(backend, "generate_prompt", infer)
     response = client.post(
         "/api/caption",
-        data={"target_id": "vision", "existing_captions": '["kept.txt"]'},
+        data={
+            "target_id": "vision",
+            "trigger_word": "TOK",
+            "existing_captions": '["kept.txt"]',
+        },
         files=files("kept.png", "new.png", "other.png"),
     )
     assert response.status_code == 200
@@ -79,7 +88,10 @@ def test_caption_zip_and_skip(client, monkeypatch):
             "other.txt",
             "caption-manifest.json",
         }
-        assert archive.read("new.txt").decode("utf-8") == "A tiny café.\n"
+        assert (
+            archive.read("new.txt").decode("utf-8")
+            == "TOK stands beside a tiny café.\n"
+        )
         manifest = json.loads(archive.read("caption-manifest.json"))
         assert manifest["counts"] == {"captioned": 2, "skipped": 1, "failed": 0}
 
@@ -87,7 +99,11 @@ def test_caption_zip_and_skip(client, monkeypatch):
 def test_all_skipped_without_starting_model(client):
     response = client.post(
         "/api/caption",
-        data={"target_id": "vision", "existing_captions": '["IMAGE.TXT"]'},
+        data={
+            "target_id": "vision",
+            "trigger_word": "TOK",
+            "existing_captions": '["IMAGE.TXT"]',
+        },
         files=files("image.png"),
     )
     assert response.status_code == 200
@@ -100,7 +116,9 @@ def test_caption_inference_failure_is_reported(client, monkeypatch):
 
     monkeypatch.setattr(backend, "generate_caption", infer)
     response = client.post(
-        "/api/caption", data={"target_id": "vision"}, files=files("image.png")
+        "/api/caption",
+        data={"target_id": "vision", "trigger_word": "TOK"},
+        files=files("image.png"),
     )
     assert response.status_code == 200
     assert response.headers["X-failed"] == "1"
@@ -121,7 +139,9 @@ def test_caption_inference_failure_is_reported(client, monkeypatch):
 )
 def test_unsafe_or_ambiguous_names(client, names):
     response = client.post(
-        "/api/caption", data={"target_id": "vision"}, files=files(*names)
+        "/api/caption",
+        data={"target_id": "vision", "trigger_word": "TOK"},
+        files=files(*names),
     )
     assert response.status_code == 422
 
@@ -130,7 +150,11 @@ def test_unsafe_or_ambiguous_names(client, names):
 def test_invalid_existing_names(client, existing):
     response = client.post(
         "/api/caption",
-        data={"target_id": "vision", "existing_captions": existing},
+        data={
+            "target_id": "vision",
+            "trigger_word": "TOK",
+            "existing_captions": existing,
+        },
         files=files("image.png"),
     )
     assert response.status_code == 422
@@ -155,7 +179,7 @@ def test_invalid_image_and_json_output_reported_per_file(client, monkeypatch):
     monkeypatch.setattr(backend, "generate_prompt", infer)
     response = client.post(
         "/api/caption",
-        data={"target_id": "vision"},
+        data={"target_id": "vision", "trigger_word": "TOK"},
         files=[("images", ("bad.png", b"bad", "image/png")), *files("valid.png")],
     )
     assert response.status_code == 200
@@ -167,7 +191,7 @@ def test_invalid_image_and_json_output_reported_per_file(client, monkeypatch):
 def test_batch_image_count_limit(client):
     response = client.post(
         "/api/caption",
-        data={"target_id": "vision"},
+        data={"target_id": "vision", "trigger_word": "TOK"},
         files=files(*(f"{i}.png" for i in range(101))),
     )
     assert response.status_code == 422
@@ -179,4 +203,3 @@ def test_prompt_overrides_preserve_json_braces(monkeypatch):
     )
     assert build_prompt("json-model", "text", "a flower") == '{"prompt": "a flower"}'
     assert build_prompt("other", "text", "a flower").endswith("a flower")
-    assert build_prompt("json-model", "caption") == PROMPTS["caption"]

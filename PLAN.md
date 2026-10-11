@@ -125,6 +125,18 @@
 - [x] Verify typing/lint and unchanged lifecycle/YAML checksums.
 - [ ] User: evaluate tag quality and exact trigger adherence with real model images.
 
+## Krea2-only folder LoRA captions
+- [x] Recover the 35 missing tracked files from the latest commit with explicit approval; remove the obsolete checkout after making a private temporary recovery archive.
+- [x] Restrict folder captioning to Qwen3.5 and Krea2 Character/Style modes; require a single-line trigger for both.
+- [x] Replace comma-tag prompts with natural prose; Character omits faces/fixed identity features, Style describes visible content and lets the shared aesthetic carry style.
+- [x] Remove obsolete general/tagged and non-Krea2 folder formats, JSON sidecar branches and extension switching.
+- [x] Retain single-image adapters/schema validation; reinstate the previously requested Qwen-Image-2.1 model choice missing from the restored commit.
+- [x] Reject captions missing the exact trigger-space prefix per image; retain sequential ZIP/manifest output and skip behavior.
+- [x] Update frontend rule hints, fixed caption-model selection, script cache version and README/API documentation.
+- [x] Verify 188 backend + 30 frontend tests, 94% combined prompts/captioning coverage, strict typing and scoped Ruff/Black checks; keep runtime lifecycle and model/YAML configuration unchanged.
+- [x] Check both LoRA types, trigger controls, TXT-only skipping, ZIP output, mobile layout and single-image choices in Chromium with mocked inference.
+- [ ] Broad real-model prose/identity-exclusion adherence remains a manual review requirement; prompt instructions are not semantic validation.
+
 ## README technology overview
 - [x] Add a compact technology table and GitHub-rendered Mermaid architecture diagram.
 - [x] Show local inference, configuration, validation and browser output without implying image generation.

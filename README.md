@@ -153,7 +153,7 @@ Current entries:
 | Registry ID | YAML | Supported workflow |
 |---|---|---|
 | `GemmaUnseen` | `unseen.yaml` | Single-image prompts for Krea2, Z-Image, FLUX.2 Klein, Anima and Qwen-Image-2.1 |
-| `Captioning` | `caption.yaml` | Qwen3.5 folder captions and single-image Ideogram 4 JSON |
+| `Captioning` | `caption.yaml` | Krea2 folder training captions and single-image Qwen-Image-2.1 text / Ideogram 4 JSON |
 | `Fibo` | `fibo.yaml` | Single-image Ideogram workflow, using native Fibo JSON |
 
 These IDs are intentionally used instead of names from the reference scripts, such as `Qwen35Captioning`. Configurations must be registered YAML files inside `config/`; model startup verifies that the selected file exists.
@@ -207,15 +207,18 @@ Upload or drag/drop a **PNG, JPEG or WebP**, up to **10 MB**. All target image g
 
 | Target image generator | Prompt-writing model choices | Output |
 |---|---|---|
-| Krea2, Z-Image, FLUX.2 Klein, Anima, Qwen-Image-2.1 | GemmaUnseen only, selected automatically | Generator-specific prompt text |
+| Krea2, Z-Image, FLUX.2 Klein, Anima | GemmaUnseen only, selected automatically | Generator-specific prompt text |
+| Qwen-Image-2.1 | GemmaUnseen by default, or Qwen3.5 Captioning | Gemma prompt sections or a Qwen descriptive paragraph |
 | Ideogram 4 | Fibo by default, or Qwen3.5 Captioning | JSON; the two models use different schemas |
 
 For **GemmaUnseen**, optionally describe changes. Empty changes or “as-is” request reconstruction without changes. Krea2, FLUX and Anima request raw prose; Z-Image and Qwen retain their original breakdowns/sections. Headings and code fences are preserved. The Qwen generation template uses the uploaded image only for Gemma's analysis: its copyable output describes the finished scene without downstream editing/reference instructions. Requested changes are expressed as final visual attributes. Detail follows scene complexity rather than a mandatory word count; composition, lighting, materials, palette and exact readable typography receive concrete descriptions.
 
+For **Qwen-Image-2.1**, Qwen3.5 uses its standalone descriptive-caption template and server generation defaults, returning plain text rather than JSON. It describes the image as-is, with change instructions disabled; Gemma still accepts optional changes.
+
 For **Ideogram 4**, analysis is **as-is**: change instructions are disabled and nonempty API instructions are rejected.
 
 - **Fibo:** native scene analysis (`general` / `objects`), downloadable as `fibo-scene.json`. Coordinate/color tokens are converted to numbers, including nested objects. This native schema is not converted into the Ideogram caption schema; selecting Ideogram indicates its intended workflow, not verified downstream schema compatibility.
-- **Qwen3.5 Captioning:** the same constrained, validated Ideogram JSON path used by folder captions, downloadable as `ideogram4-caption.json`. An explicit Qwen choice is preserved; Fibo remains the default.
+- **Qwen3.5 Captioning:** a dedicated constrained, validated single-image Ideogram JSON path, downloadable as `ideogram4-caption.json`. An explicit Qwen choice is preserved; Fibo remains the default.
 
 Gemma remains **excluded from Ideogram by user choice**. A live feasibility evaluation produced validated JSON in 3/3 requests across two images, but found inconsistent complex-text transcription and palette fidelity. This small evaluation did not establish Qwen-equivalent accuracy.
 
@@ -225,15 +228,15 @@ If a required model is missing, generation is disabled instead of silently choos
 
 ### Caption a folder
 
-Caption mode shows and automatically selects only **Qwen3.5 Captioning (NSFW)**. Choose a caption style, then select a folder through the browser.
+Folder captioning is exclusively for **Krea2 LoRA training** and automatically selects only **Qwen3.5 Captioning (NSFW)**. Choose **Character** or **Style**, supply a required trigger word, then select a folder through the browser. Both types use natural sentences, never comma-separated tags. The model selector is locked in this mode.
 
 - Top-level PNG/JPEG/WebP/BMP images only; hidden files and subfolders are ignored.
 - Maximum **100 images**, **100 MB total**, **10 MB per image**.
 - Images are processed sequentially; the model starts/reuses once for the batch.
-- Text styles skip matching `.txt` captions; Ideogram skips matching `.json` captions. One extension does not block the other.
+- Both types write `.txt` sidecars and skip matching existing `.txt` captions. `.json` files in the selected folder are ignored.
 - Existing caption contents are not uploaded—only filenames are sent for skipping.
 - Rename images sharing a caption filename, such as `photo.jpg` and `photo.png`.
-- The filename `caption-manifest.json` is reserved for batch reporting; a colliding image stem is rejected.
+- `caption-manifest.json` contains batch reporting; a `caption-manifest.png` image safely gets its own `caption-manifest.txt` sidecar.
 
 Results download as `captions.zip`, containing UTF-8 sidecars and `caption-manifest.json` with counts and per-image outcomes. Extract the ZIP into your original image folder. Failed images do not receive empty or invalid sidecars; other images continue processing.
 
@@ -251,21 +254,23 @@ The light/dark toggle remembers your preference. Nunito Sans is fetched from Goo
 
 ## Caption and JSON formats
 
-### Five folder-caption styles
+### Krea2 Character and Style captions
 
-| Style | Format and instructions |
+**Main rule: caption the dataset in natural sentences, not comma-separated tags.** Both types produce concise English prose beginning with the exact trigger word followed by a space.
+
+| LoRA type | What the caption describes |
 |---|---|
-| Krea2 Standard | `.txt`; medium first, approximately 30–120 words; no trigger |
-| Tagged attributes | `.txt`; comma-separated attributes beginning with the exact required trigger |
-| Qwen-Image-2.1 text | `.txt`; standalone descriptive English paragraph, ideally 250–500 words |
-| Qwen-Image-2.1 tagged | `.txt`; Qwen-oriented comma-separated visual attributes beginning with the exact required trigger |
-| Ideogram 4 JSON | `.json`; structured scene/style/composition description, validated and canonically serialized |
+| **Character** | Outfit, pose/action, lighting and background. Exclude the face, facial expression, eyes, skin tone, hair, age, ethnicity, body shape and other fixed identity features; let the trigger carry identity. |
+| **Style** | Visible content normally: subjects, appearance, objects, clothing, action, composition, lighting and background. The character-specific feature exclusions do not apply. Let the dataset's consistent aesthetic carry the style rather than repeating aesthetic labels or artist/style tags. |
 
-Both tagged styles require a nonempty **single-line trigger**, up to **200 characters**. The prompt asks the model to preserve its exact spelling and case. Real-model adherence is not guaranteed merely by validating the input.
+Examples with trigger `TOK`:
 
-The Qwen text style opens with the visual anchor, then describes subject/action, spatial layers, materials, lighting, palette, medium and framing. Readable text remains quoted in its original script with placement/typography details. It omits generic quality boosters, absent-reference edit instructions, aspect-ratio flags, breakdowns and tweak suggestions.
+- **Character:** `TOK wears a blue cotton jacket and stands beside a wooden fence. Soft light falls from the left, with a garden in the background.`
+- **Style:** `TOK depicts a cat curled on a red cushion beside a window. Afternoon sunlight illuminates the cushion, and a potted plant stands behind it.`
 
-The dedicated Qwen tagged style covers subject/action, materials, spatial layers, composition, lighting, palette and medium. It is a custom dataset-caption format adapted from the supplied Qwen rules—not a claim that Qwen requires tags or treats the trigger as a special token. Both Qwen styles retain server sampling defaults and do not change the original image-to-prompt template.
+Both require a nonempty **single-line trigger**, up to **200 characters**; surrounding input whitespace is trimmed while spelling/case are preserved. Captions missing the exact trigger-space prefix are reported as per-image failures and are not written. Natural-prose adherence and the exclusion of fixed features are model instructions, not reliable semantic validators: review captions before training. Existing `.txt` captions are skipped without inspecting or rewriting their contents; move old tag captions aside if you want to recaption them.
+
+The former Standard/Tagged, Qwen and Ideogram **folder** formats have been removed. Single-image Gemma, Qwen-Image-2.1 text, Ideogram JSON and Fibo workflows remain available; their shared adapters and validation are retained.
 
 ### Ideogram caption schema
 
@@ -398,7 +403,7 @@ All templates live in `src/prompting_pot/prompts.py`; external reference scripts
 
 Fibo sends `special: true` and `skip_special_tokens: false`. `fibo_schema.py` vendors native validation/token processing, omitting the unused NumPy mask-rasterization helper. Invalid, duplicate-key, nonfinite or truncated native JSON fails rather than returning a partial result.
 
-`build_image_prompt()` selects Gemma's five generator-specific system templates. The Qwen-Image-2.1 generation template has been revised for standalone generation using the supplied PDF; captioning templates are separate and unchanged. Qwen uses `build_caption_request()` with the original/custom caption templates; Fibo uses `FIBO_CAPTION_PROMPT`. `ideogram_caption.py` owns Ideogram schema validation and canonical serialization, without requiring an Ideogram runtime. The generic text template and `TARGET_PROMPTS` remain available for future text integration; `build_prompt()` substitutes literal `{description}` without interpreting JSON braces. The retained generic image starter is not used by the connected endpoint.
+`build_image_prompt()` selects Gemma's five generator-specific system templates. The Qwen-Image-2.1 generation template has been revised for standalone generation using the supplied PDF; single-image caption templates are separate. `FOLDER_CAPTION_STYLES` contains only Krea2 Character/Style prose templates; `build_caption_request()` also retains Qwen-Image-2.1 and Ideogram instructions for single-image use; Fibo uses `FIBO_CAPTION_PROMPT`. `ideogram_caption.py` owns Ideogram schema validation and canonical serialization, without requiring an Ideogram runtime. The generic text template and `TARGET_PROMPTS` remain available for future text integration; `build_prompt()` substitutes literal `{description}` without interpreting JSON braces. The retained generic image starter is not used by the connected endpoint.
 
 The async OpenAI SDK uses its compatible HTTP client with proxy environment variables bypassed for local requests. HTTP/connection/timeout/empty-response failures are surfaced; no remote fallback or fabricated output is supplied.
 
@@ -408,8 +413,8 @@ Interactive documentation: `/docs`.
 
 - `GET /api/targets`: registered IDs/names with `vision`, `captioning`, `image_generators`, `analysis_only` and `text` workflow flags. Captioning is restricted to the registered `Captioning` model.
 - `GET /api/image-generators`: available generator IDs/display names, including `ideogram4`. The UI keeps the full generator list visible and filters the model dropdown; the backend checks model/generator compatibility.
-- `POST /api/generate`: multipart `target_id`, `mode` (`image` / `text`), `description`, plus required `image` and `image_generator` in image mode. Ideogram analysis rejects change instructions.
-- `POST /api/caption`: multipart `target_id`, repeated `images`, `existing_captions` (JSON filename list), `caption_style` (`standard`, `tagged`, `qwen-image-2.1`, `qwen-image-2.1-tagged`, `ideogram4`) and `trigger_word` for tagged styles. Returns `application/zip`, with `X-captioned`, `X-skipped` and `X-failed` headers.
+- `POST /api/generate`: multipart `target_id`, `mode` (`image` / `text`), `description`, plus required `image` and `image_generator` in image mode. Qwen/Fibo as-is single-image analysis rejects change instructions.
+- `POST /api/caption`: multipart `target_id` (`Captioning` only), repeated `images`, `existing_captions` (JSON list of flat `.txt` filenames), `caption_style` (`character`, the default, or `style`) and required `trigger_word`. Removed format IDs return 422 before startup. Returns a ZIP of `.txt` captions and the manifest, with `X-captioned`, `X-skipped` and `X-failed` headers.
 - Generation success: `{"output": "prompt text or serialized JSON"}` or `{"output": {"general": {}, "objects": []}}` for native structured output. These illustrate response shapes, not fabricated model results.
 - Errors use FastAPI's standard `detail` field; batch inference/image failures are recorded per image in the manifest.
 

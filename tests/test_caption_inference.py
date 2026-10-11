@@ -14,18 +14,12 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 from PIL import Image
 
 from prompting_pot import captioning
-from prompting_pot.prompts import (
-    CAPTION_PROMPT,
-    CAPTIONING_TAG_PROMPT,
-    QWEN_IMAGE_2_1_TAG_CAPTION_PROMPT,
-    TAGGED_CAPTION_STYLES,
-    build_caption_request,
-)
+from prompting_pot.prompts import FOLDER_CAPTION_STYLES, build_caption_request
 
 backend = importlib.import_module("prompting_pot.app")
 
 
-def completion(text="35mm film photograph of a café"):
+def completion(text="TOK wears a blue jacket beside a window."):
     return SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content=text))]
     )
@@ -48,7 +42,7 @@ def sdk(monkeypatch):
     return client, factory
 
 
-def call(style="standard", trigger=""):
+def call(style="character", trigger="TOK"):
     prompt, instruction = build_caption_request(style, trigger)
     return asyncio.run(
         captioning.generate_caption(
@@ -63,24 +57,13 @@ def call(style="standard", trigger=""):
     )
 
 
-@pytest.mark.parametrize(
-    "style,trigger",
-    [
-        ("standard", ""),
-        ("tagged", "alex cooper"),
-        ("tagged", "café character"),
-        ("qwen-image-2.1-tagged", "alex cooper"),
-        ("qwen-image-2.1-tagged", "Café Character"),
-    ],
-)
+@pytest.mark.parametrize("style", ["character", "style"])
+@pytest.mark.parametrize("trigger", ["TOK", "Café O'Connor"])
 def test_caption_payload_and_server_defaults(sdk, style, trigger):
     client, factory = sdk
-    assert call(style, trigger) == "35mm film photograph of a café"
+    assert call(style, trigger) == "TOK wears a blue jacket beside a window."
     kwargs = client.chat.completions.create.call_args.kwargs
-    assert set(kwargs) == {
-        "model",
-        "messages",
-    }  # No image-prompt sampling/reasoning overrides.
+    assert set(kwargs) == {"model", "messages"}
     assert kwargs["model"] == "Captioning"
     prompt, instruction = build_caption_request(style, trigger)
     assert kwargs["messages"][0] == {"role": "system", "content": prompt}
@@ -89,24 +72,32 @@ def test_caption_payload_and_server_defaults(sdk, style, trigger):
         "url"
     ] == "data:image/bmp;base64," + base64.b64encode(b"image bytes").decode("ascii")
     assert content[1] == {"type": "text", "text": instruction}
-    if style in TAGGED_CAPTION_STYLES:
-        assert prompt == (
-            QWEN_IMAGE_2_1_TAG_CAPTION_PROMPT
-            if style == "qwen-image-2.1-tagged"
-            else CAPTIONING_TAG_PROMPT
-        )
-        assert (
-            instruction
-            == f"Start the captioning with this exact trigger word: '{trigger}'"
-        )
-    else:
-        assert prompt == CAPTION_PROMPT
-        assert instruction == "Caption this image following the system instructions."
+    assert prompt == FOLDER_CAPTION_STYLES[style]
+    assert instruction.startswith(
+        f"Begin with this exact trigger word followed by a space: {trigger}\n"
+    )
     settings = factory.call_args.kwargs
     assert settings["base_url"] == "http://local-server:8080/v1"
     assert settings["timeout"] == 300.0
     assert settings["max_retries"] == 0
     assert settings["http_client"].is_closed
+
+
+@pytest.mark.parametrize("style", ["character", "style"])
+def test_krea2_prompt_contract(style):
+    prompt = FOLDER_CAPTION_STYLES[style]
+    assert "natural, complete English sentences" in prompt
+    assert "never comma-separated tags" in prompt
+    assert "exact user-supplied trigger word followed by a space" in prompt
+    if style == "character":
+        assert "Do not describe the face" in prompt
+        assert "fixed identity features" in prompt
+        assert "outfit" in prompt and "pose/action" in prompt
+    else:
+        assert "visible content normally" in prompt
+        assert "consistent aesthetic across the dataset carry the style" in prompt
+        assert "Visible facial features may be described" in prompt
+        assert "Do not describe the face" not in prompt
 
 
 @pytest.mark.parametrize(
@@ -166,6 +157,7 @@ def api(tmp_path, monkeypatch):
                     "config": "unseen.yaml",
                     "vision": True,
                 },
+                {"id": "Fibo", "name": "Fibo", "config": "fibo.yaml", "vision": True},
             ]
         )
     )
@@ -177,19 +169,23 @@ def api(tmp_path, monkeypatch):
     return TestClient(backend.app), start, stop
 
 
-@pytest.mark.parametrize(
-    "style",
-    ["standard", "tagged", "qwen-image-2.1", "qwen-image-2.1-tagged", "ideogram4"],
-)
-def test_gemma_is_rejected_for_all_caption_styles(api, style):
+def image(name="image.png", format="PNG"):
+    buffer = BytesIO()
+    Image.new("RGB", (2, 2)).save(buffer, format)
+    return "images", (
+        name,
+        buffer.getvalue(),
+        "image/bmp" if format == "BMP" else "image/png",
+    )
+
+
+@pytest.mark.parametrize("model", ["GemmaUnseen", "Fibo"])
+@pytest.mark.parametrize("style", ["character", "style"])
+def test_other_models_are_rejected_for_captioning(api, model, style):
     http, start, stop = api
     response = http.post(
         "/api/caption",
-        data={
-            "target_id": "GemmaUnseen",
-            "caption_style": style,
-            "trigger_word": "a character",
-        },
+        data={"target_id": model, "caption_style": style, "trigger_word": "TOK"},
         files=[image()],
     )
     assert response.status_code == 422
@@ -203,41 +199,22 @@ def test_caption_model_metadata(api):
     models = {model["id"]: model for model in http.get("/api/targets").json()}
     assert models["Captioning"]["captioning"] is True
     assert models["GemmaUnseen"]["captioning"] is False
+    assert models["Fibo"]["captioning"] is False
 
 
-def image(name="image.png", format="PNG"):
-    buffer = BytesIO()
-    Image.new("RGB", (2, 2)).save(buffer, format)
-    return (
-        "images",
-        (name, buffer.getvalue(), "image/bmp" if format == "BMP" else "image/png"),
-    )
-
-
-@pytest.mark.parametrize(
-    "style,trigger",
-    [
-        ("standard", "ignored"),
-        ("tagged", "alex cooper"),
-        ("qwen-image-2.1-tagged", "alex cooper"),
-        ("qwen-image-2.1-tagged", "Café O'Connor"),
-    ],
-)
-def test_endpoint_caption_styles_skip_and_bmp(api, sdk, style, trigger):
+@pytest.mark.parametrize("style", ["character", "style"])
+@pytest.mark.parametrize("trigger", ["TOK", "Café O'Connor"])
+def test_endpoint_caption_types_skip_and_bmp(api, sdk, style, trigger):
     http, start, stop = api
     client, factory = sdk
-    text = (
-        f"{trigger}, portrait, soft light"
-        if style in TAGGED_CAPTION_STYLES
-        else "35mm film photograph, soft light"
-    )
+    text = f"{trigger} wears a blue jacket beside a window. Soft light falls from the left."
     client.chat.completions.create.return_value = completion(text)
     response = http.post(
         "/api/caption",
         data={
             "target_id": "Captioning",
             "caption_style": style,
-            "trigger_word": trigger,
+            "trigger_word": f"  {trigger}  ",
             "existing_captions": '["kept.txt"]',
         },
         files=[image("kept.png"), image("new.bmp", "BMP"), image("other.png")],
@@ -250,11 +227,7 @@ def test_endpoint_caption_styles_skip_and_bmp(api, sdk, style, trigger):
     assert client.chat.completions.create.await_count == 2
     assert factory.call_args.kwargs["base_url"] == "http://custom-address:8080/v1"
     message = client.chat.completions.create.call_args.kwargs["messages"]
-    assert message[0]["content"] == (
-        QWEN_IMAGE_2_1_TAG_CAPTION_PROMPT
-        if style == "qwen-image-2.1-tagged"
-        else CAPTIONING_TAG_PROMPT if style == "tagged" else CAPTION_PROMPT
-    )
+    assert message[0]["content"] == FOLDER_CAPTION_STYLES[style]
     assert message[1]["content"][1]["text"] == build_caption_request(style, trigger)[1]
     with ZipFile(BytesIO(response.content)) as archive:
         assert "kept.txt" not in archive.namelist()
@@ -263,21 +236,34 @@ def test_endpoint_caption_styles_skip_and_bmp(api, sdk, style, trigger):
 
 
 @pytest.mark.parametrize(
-    "style,trigger",
+    "style",
     [
-        ("unknown", ""),
-        ("tagged", ""),
-        ("tagged", "  "),
-        ("tagged", "a\nb"),
-        ("tagged", "a" * 201),
-        ("qwen-image-2.1-tagged", ""),
-        ("qwen-image-2.1-tagged", "  "),
-        ("qwen-image-2.1-tagged", "a\nb"),
-        ("qwen-image-2.1-tagged", "a\rb"),
-        ("qwen-image-2.1-tagged", "a" * 201),
+        "unknown",
+        "standard",
+        "tagged",
+        "qwen-image-2.1",
+        "qwen-image-2.1-tagged",
+        "ideogram4",
     ],
 )
-def test_caption_validation_before_startup(api, style, trigger):
+def test_removed_folder_formats_are_rejected_before_startup(api, style):
+    http, start, stop = api
+    response = http.post(
+        "/api/caption",
+        data={"target_id": "Captioning", "caption_style": style, "trigger_word": "TOK"},
+        files=[image()],
+    )
+    assert response.status_code == 422
+    assert "Character or Style" in response.json()["detail"]
+    start.assert_not_awaited()
+    stop.assert_not_awaited()
+
+
+@pytest.mark.parametrize("style", ["character", "style"])
+@pytest.mark.parametrize(
+    "trigger", ["", "  ", "a\nb", "a\rb", "TOK\n", "\rTOK", "a" * 201]
+)
+def test_trigger_validation_before_startup(api, style, trigger):
     http, start, stop = api
     response = http.post(
         "/api/caption",
@@ -293,16 +279,19 @@ def test_caption_validation_before_startup(api, style, trigger):
     stop.assert_not_awaited()
 
 
-def test_one_empty_caption_does_not_stop_remaining_images(api, sdk):
+@pytest.mark.parametrize(
+    "invalid", ["", "Wrong wears a coat.", "TOKother wears a coat.", "TOK", "TOK   "]
+)
+def test_invalid_trigger_output_does_not_stop_remaining_images(api, sdk, invalid):
     http, start, stop = api
     client, _ = sdk
     client.chat.completions.create.side_effect = [
-        completion(""),
-        completion("valid caption"),
+        completion(invalid),
+        completion("TOK stands near a window."),
     ]
     response = http.post(
         "/api/caption",
-        data={"target_id": "Captioning"},
+        data={"target_id": "Captioning", "trigger_word": "TOK"},
         files=[image("bad.png"), image("good.png")],
     )
     assert response.status_code == 200
@@ -312,11 +301,41 @@ def test_one_empty_caption_does_not_stop_remaining_images(api, sdk):
     stop.assert_awaited_once()
     with ZipFile(BytesIO(response.content)) as archive:
         assert "bad.txt" not in archive.namelist()
-        assert archive.read("good.txt") == b"valid caption\n"
+        assert archive.read("good.txt") == b"TOK stands near a window.\n"
         assert (
             json.loads(archive.read("caption-manifest.json"))["files"][0]["status"]
             == "failed"
         )
+
+
+def test_caption_manifest_image_is_safe_with_txt_sidecars(api, sdk):
+    http, _, _ = api
+    response = http.post(
+        "/api/caption",
+        data={"target_id": "Captioning", "trigger_word": "TOK"},
+        files=[image("caption-manifest.png")],
+    )
+    assert response.status_code == 200
+    with ZipFile(BytesIO(response.content)) as archive:
+        assert set(archive.namelist()) == {
+            "caption-manifest.txt",
+            "caption-manifest.json",
+        }
+
+
+def test_existing_json_is_not_a_folder_caption(api):
+    http, start, _ = api
+    response = http.post(
+        "/api/caption",
+        data={
+            "target_id": "Captioning",
+            "trigger_word": "TOK",
+            "existing_captions": '["image.json"]',
+        },
+        files=[image()],
+    )
+    assert response.status_code == 422
+    start.assert_not_awaited()
 
 
 def test_bmp_is_not_accepted_by_single_image_prompt_endpoint(api):
@@ -324,11 +343,7 @@ def test_bmp_is_not_accepted_by_single_image_prompt_endpoint(api):
     _, (_, content, content_type) = image("image.bmp", "BMP")
     response = http.post(
         "/api/generate",
-        data={
-            "target_id": "Captioning",
-            "mode": "image",
-            "image_generator": "krea2",
-        },
+        data={"target_id": "Captioning", "mode": "image", "image_generator": "krea2"},
         files={"image": ("image.bmp", content, content_type)},
     )
     assert response.status_code == 422

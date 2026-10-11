@@ -36,6 +36,7 @@ function setup(fetchImpl = () => new Promise(() => {})) {
     URL: { createObjectURL: () => 'blob:preview', revokeObjectURL() {} },
     fetch: fetchImpl, FormData, Blob,
   });
+  element('caption-style').value = 'character';
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/prompting_pot/static/app.js'), 'utf8'), context);
   return { element, context };
 }
@@ -113,6 +114,7 @@ test('caption mode shows and auto-selects only its allowed model, then restores 
   assert.deepEqual(element('target').options.map(option => option.value), ['Captioning']);
   assert.equal(element('target').value, 'Captioning');
   assert.equal(element('target').options[0].text, 'Qwen3.5 Captioning (NSFW)');
+  assert.equal(element('target').disabled, true);
   element('mode-image').onclick();
   assert.equal(element('target').value, 'GemmaUnseen');
   assert.ok(element('target').options.some(option => option.value === 'GemmaUnseen'));
@@ -128,7 +130,7 @@ test('caption mode never falls back to Gemma when its required model is missing'
   assert.match(element('capability').textContent, /Configure the Captioning model/);
 });
 
-for (const generator of ['krea2', 'zimage', 'flux2-klein', 'anima', 'qwen-image-2.1']) {
+for (const generator of ['krea2', 'zimage', 'flux2-klein', 'anima']) {
   test(`${generator} shows and automatically selects only GemmaUnseen`, () => {
     const { element, context } = setup();
     vm.runInContext(`targets = [{id: 'GemmaUnseen', name: 'Gemma Unseen Prompt From Img (NSFW)', vision: true}, {id: 'Captioning', vision: true, captioning: true, analysis_only: true, image_generators: ['ideogram4']}, {id: 'Fibo', vision: true, analysis_only: true, image_generators: ['ideogram4']}]; imageGenerators = [{id: '${generator}', name: '${generator}'}, {id: 'ideogram4', name: 'Ideogram 4'}]`, context);
@@ -276,42 +278,45 @@ test('image generation requires both independent model selections', () => {
   assert.equal(element('generate').disabled, true);
 });
 
-test('tagged captions show and require a trigger only in caption mode', () => {
+test('folder markup exposes only Krea2 Character and Style, without tagged formats', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../src/prompting_pot/static/index.html'), 'utf8');
+  const options = html.match(/<select id="caption-style"[^>]*>([\s\S]*?)<\/select>/)[1];
+  assert.deepEqual([...options.matchAll(/<option value="([^"]+)"/g)].map(match => match[1]), ['character', 'style']);
+  assert.match(html, /natural sentences, never comma-separated tags/);
+});
+
+test('both Krea2 types require a trigger only in caption mode and explain their rules', () => {
   const { element, context } = setup();
   vm.runInContext("mode = 'caption'", context);
-  element('caption-style').value = 'tagged';
-  element('caption-style').onchange();
-  assert.equal(element('trigger-fields').hidden, false);
-  assert.equal(element('trigger-word').required, true);
-  element('caption-style').value = 'standard';
-  element('caption-style').onchange();
-  assert.equal(element('trigger-fields').hidden, true);
-  assert.equal(element('trigger-word').required, false);
-  element('caption-style').value = 'tagged';
+  for (const type of ['character', 'style']) {
+    element('caption-style').value = type;
+    element('caption-style').onchange();
+    assert.equal(element('trigger-word').required, true);
+    assert.match(element('caption-rules').textContent, /Natural sentences/);
+    assert.match(element('caption-rules').textContent, type === 'character' ? /Omit the face/ : /consistent aesthetic/);
+  }
   vm.runInContext("mode = 'image'", context);
   element('caption-style').onchange();
   assert.equal(element('trigger-word').required, false);
 });
 
-test('Qwen tagged captions require a trigger and switch back to ordinary Qwen text cleanly', async () => {
-  let uploaded = false;
+test('Qwen single-image choices retain the generator and display prose without a JSON download', async () => {
   const { element, context } = setup(url => {
-    if (url === '/api/caption') uploaded = true;
+    if (url === '/api/generate') return Promise.resolve({ok: true, json: async () => ({output: 'A descriptive scene paragraph.'})});
     return new Promise(() => {});
   });
-  vm.runInContext("mode = 'caption'", context);
-  element('caption-style').value = 'qwen-image-2.1-tagged';
-  element('caption-style').onchange();
-  assert.equal(element('trigger-fields').hidden, false);
-  assert.equal(element('trigger-word').required, true);
-  element('trigger-word').value = '  ';
+  vm.runInContext("targets = [{id: 'GemmaUnseen', vision: true}, {id: 'Captioning', vision: true, captioning: true, analysis_only: true, image_generators: ['ideogram4', 'qwen-image-2.1']}, {id: 'Fibo', vision: true}]; imageGenerators = [{id: 'qwen-image-2.1', name: 'Qwen'}, {id: 'ideogram4', name: 'Ideogram'}]", context);
+  element('image-generator').value = 'qwen-image-2.1'; element('image-generator').onchange();
+  assert.deepEqual(element('target').options.map(o => o.value), ['GemmaUnseen', 'Captioning']);
+  assert.equal(element('target').value, 'GemmaUnseen');
+  element('target').value = 'Captioning'; element('target').onchange();
+  assert.equal(element('image-generator').value, 'qwen-image-2.1');
+  assert.equal(element('changes').disabled, true);
+  element('image').files = [new Blob(['image'], {type: 'image/png'})];
   await element('form').onsubmit(event());
-  assert.equal(uploaded, false);
-  assert.match(element('status').textContent, /trigger word/);
-  element('caption-style').value = 'qwen-image-2.1';
-  element('caption-style').onchange();
-  assert.equal(element('trigger-fields').hidden, true);
-  assert.equal(element('trigger-word').required, false);
+  assert.equal(element('output').value, 'A descriptive scene paragraph.');
+  assert.equal(element('format').textContent, 'TEXT');
+  assert.equal(element('download').hidden, true);
 });
 
 test('caption folder selection includes BMP and ignores hidden files and subfolders', () => {
@@ -328,7 +333,7 @@ test('caption folder selection includes BMP and ignores hidden files and subfold
 });
 
 test('caption requests send style and trigger, and expose the ZIP download', async () => {
-  for (const style of ['standard', 'tagged', 'qwen-image-2.1', 'qwen-image-2.1-tagged', 'ideogram4']) {
+  for (const style of ['character', 'style']) {
     let request;
     const { element, context } = setup((url, options) => {
       if (url !== '/api/caption') return new Promise(() => {});
@@ -343,37 +348,32 @@ test('caption requests send style and trigger, and expose the ZIP download', asy
     element('folder').onchange();
     await element('form').onsubmit(event());
     assert.equal(request.body.get('caption_style'), style);
-    assert.equal(request.body.get('trigger_word'), ['tagged', 'qwen-image-2.1-tagged'].includes(style) ? 'alex cooper' : '');
+    assert.equal(request.body.get('trigger_word'), 'alex cooper');
     assert.equal(request.body.get('target_id'), 'Captioning');
     assert.equal(request.body.get('images').name, 'image.bmp');
     assert.equal(element('download').hidden, false);
   }
 });
 
-test('switching caption format recalculates skip counts for the selected extension', () => {
-  const { element } = setup();
-  element('caption-style').value = 'standard';
-  element('folder').files = ['a.png', 'b.png', 'a.txt', 'b.txt', 'a.json'].map(name => ({ name, webkitRelativePath: `dataset/${name}` }));
+test('both Krea2 types skip only txt sidecars and ignore JSON files', () => {
+  const { element, context } = setup();
+  element('folder').files = ['a.png', 'b.png', 'a.txt', 'b.txt', 'a.json'].map(name => ({name, webkitRelativePath: `dataset/${name}`}));
   element('folder').onchange();
-  assert.match(element('folder-summary').textContent, /2 existing captions/);
-  element('caption-style').value = 'ideogram4';
-  element('caption-style').onchange();
-  assert.match(element('folder-summary').textContent, /1 existing captions/);
-  assert.match(element('caption-file-help').textContent, /validated .json/);
-  assert.equal(element('trigger-fields').hidden, true);
-  element('caption-style').value = 'qwen-image-2.1';
-  element('caption-style').onchange();
-  assert.match(element('folder-summary').textContent, /2 existing captions/);
+  assert.equal(vm.runInContext('existingCaptions.length', context), 2);
+  for (const type of ['character', 'style']) {
+    element('caption-style').value = type; element('caption-style').onchange();
+    assert.match(element('folder-summary').textContent, /2 existing captions/);
+  }
 });
 
-test('blank tagged trigger is rejected before uploading', async () => {
+test('blank Krea2 trigger is rejected before uploading', async () => {
   let uploaded = false;
   const { element, context } = setup((url) => {
     if (url === '/api/caption') uploaded = true;
     return new Promise(() => {});
   });
   vm.runInContext("mode = 'caption'", context);
-  element('caption-style').value = 'tagged';
+  element('caption-style').value = 'character';
   element('trigger-word').value = '  ';
   await element('form').onsubmit(event());
   assert.equal(uploaded, false);

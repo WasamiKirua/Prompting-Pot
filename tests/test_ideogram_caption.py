@@ -1,12 +1,11 @@
 import asyncio
 import importlib
 import json
-from io import BytesIO
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import BytesIO
 from threading import Thread
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
-from zipfile import ZipFile
 
 import pytest
 from fastapi.testclient import TestClient
@@ -366,100 +365,39 @@ def test_single_image_qwen_rejects_changes_before_start(api):
     stop.assert_not_awaited()
 
 
-def test_json_sidecars_and_format_specific_skip(api, sdk):
+def test_single_image_qwen_text_uses_target_prompt_without_json_settings(api, sdk):
     http, start, stop = api
-    response = http.post(
-        "/api/caption",
-        data={
-            "target_id": "Captioning",
-            "caption_style": "ideogram4",
-            "existing_captions": '["kept.JSON","new.txt"]',
-        },
-        files=files("kept.png", "new.png"),
-    )
-    assert response.status_code == 200
-    assert response.headers["X-captioned"] == "1"
-    assert response.headers["X-skipped"] == "1"
-    start.assert_awaited_once()
-    stop.assert_awaited_once()
-    with ZipFile(BytesIO(response.content)) as archive:
-        assert set(archive.namelist()) == {"new.json", "caption-manifest.json"}
-        assert json.loads(archive.read("new.json")) == caption()
-
-
-def test_all_existing_json_skips_model_start(api):
-    http, start, stop = api
-    response = http.post(
-        "/api/caption",
-        data={
-            "target_id": "Captioning",
-            "caption_style": "ideogram4",
-            "existing_captions": '["image.json"]',
-        },
-        files=files("image.png"),
-    )
-    assert response.status_code == 200
-    assert response.headers["X-skipped"] == "1"
-    start.assert_not_awaited()
-    stop.assert_not_awaited()
-
-
-def test_invalid_json_does_not_write_sidecar(api, sdk):
-    http, _, stop = api
-    sdk.chat.completions.create.return_value.choices[0].message.content = "{}"
-    response = http.post(
-        "/api/caption",
-        data={"target_id": "Captioning", "caption_style": "ideogram4"},
-        files=files("image.png"),
-    )
-    assert response.status_code == 200
-    assert response.headers["X-failed"] == "1"
-    stop.assert_awaited_once()
-    with ZipFile(BytesIO(response.content)) as archive:
-        assert archive.namelist() == ["caption-manifest.json"]
-
-
-def test_batch_validates_json_from_custom_inference(api, monkeypatch):
-    http, _, _ = api
-    monkeypatch.setattr(backend, "generate_prompt", AsyncMock(return_value="not json"))
-    response = http.post(
-        "/api/caption",
-        data={"target_id": "Captioning", "caption_style": "ideogram4"},
-        files=files("image.png"),
-    )
-    assert response.headers["X-failed"] == "1"
-    with ZipFile(BytesIO(response.content)) as archive:
-        assert "image.json" not in archive.namelist()
-
-
-def test_manifest_collision_rejected_before_startup(api):
-    http, start, _ = api
-    response = http.post(
-        "/api/caption",
-        data={"target_id": "Captioning", "caption_style": "ideogram4"},
-        files=files("caption-manifest.png"),
-    )
-    assert response.status_code == 422
-    start.assert_not_awaited()
-
-
-def test_qwen_text_uses_target_prompt_without_json_settings(api, sdk):
-    http, _, _ = api
     text = "A café with warm window light and a red wooden table."
     sdk.chat.completions.create.return_value.choices[0].message.content = text
     response = http.post(
-        "/api/caption",
+        "/api/generate",
         data={
             "target_id": "Captioning",
-            "caption_style": "qwen-image-2.1",
-            "existing_captions": '["image.json"]',
+            "mode": "image",
+            "image_generator": "qwen-image-2.1",
         },
-        files=files("image.png"),
+        files=[("image", files("image.png")[0][1])],
     )
     assert response.status_code == 200
-    assert response.headers["X-captioned"] == "1"
+    assert response.json()["output"] == text
     args = sdk.chat.completions.create.call_args.kwargs
     assert set(args) == {"model", "messages"}
     assert args["messages"][0]["content"] == QWEN_IMAGE_2_1_CAPTION_PROMPT
-    with ZipFile(BytesIO(response.content)) as archive:
-        assert archive.read("image.txt").decode("utf-8") == text + "\n"
+    start.assert_awaited_once()
+    stop.assert_awaited_once()
+
+
+def test_single_image_qwen_text_rejects_changes(api):
+    http, start, _ = api
+    response = http.post(
+        "/api/generate",
+        data={
+            "target_id": "Captioning",
+            "mode": "image",
+            "image_generator": "qwen-image-2.1",
+            "description": "change colors",
+        },
+        files=[("image", files("image.png")[0][1])],
+    )
+    assert response.status_code == 422
+    start.assert_not_awaited()

@@ -16,7 +16,7 @@ from .captioning import (
     validate_batch, validate_image,
 )
 from .prompts import (
-    CAPTION_STYLES, FIBO_CAPTION_PROMPT, IMAGE_GENERATORS, TAGGED_CAPTION_STYLES,
+    FOLDER_CAPTION_STYLES, FIBO_CAPTION_PROMPT, IMAGE_GENERATORS,
     build_caption_request, build_image_prompt, build_prompt,
 )
 from .fibo import analyze_image
@@ -87,24 +87,27 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 
 def supported_image_generators(target: Target) -> list[str]:
-    """Fibo and Qwen analyze for Ideogram; Gemma retains its existing templates."""
-    return ["ideogram4"] if target.id in {"Fibo", CAPTION_MODEL_ID} else [key for key in IMAGE_GENERATORS if key != "ideogram4"]
+    """Expose compatible single-image generators for each local vision model."""
+    if target.id == CAPTION_MODEL_ID:
+        return ["ideogram4", "qwen-image-2.1"]
+    return ["ideogram4"] if target.id == "Fibo" else [key for key in IMAGE_GENERATORS if key != "ideogram4"]
 
 
 async def generate_prompt(
     *, base_url: str, target: Target, mode: str, description: str, prompt: str,
     image: bytes | None, image_content_type: str | None,
     image_generator: str | None = None,
-    caption_style: str = "standard",
+    caption_style: str = "character",
 ) -> str | dict[str, Any] | list[Any]:
     """Call the selected local vision model for image prompts or captions."""
     if target.id == "Fibo":
         if mode != "image" or image_generator != "ideogram4" or image is None or description.strip():
             raise ValueError("Fibo requires an as-is image analysis for Ideogram 4.")
         return await analyze_image(base_url=base_url, model=target.id, image=image)
-    if mode == "image" and target.id == CAPTION_MODEL_ID and image_generator == "ideogram4":
-        prompt, description = build_caption_request("ideogram4")
-        caption_style, mode = "ideogram4", "caption"
+    if mode == "image" and target.id == CAPTION_MODEL_ID and image_generator in {"ideogram4", "qwen-image-2.1"}:
+        caption_style = image_generator
+        prompt, description = build_caption_request(caption_style)
+        mode = "caption"
     if mode == "caption":
         if image is None or image_content_type is None:
             raise ValueError("Captioning requires an image.")
@@ -160,15 +163,15 @@ async def generate(
     description = description.strip()
     if target.id == "Fibo" and (mode != "image" or description):
         raise HTTPException(422, "Fibo supports single-image as-is analysis only, without change instructions.")
-    if target.id == CAPTION_MODEL_ID and mode == "image" and image_generator == "ideogram4" and description:
-        raise HTTPException(422, "Qwen Ideogram analysis describes the image as-is, without change instructions.")
+    if target.id == CAPTION_MODEL_ID and mode == "image" and description:
+        raise HTTPException(422, "Qwen caption analysis describes the image as-is, without change instructions.")
     content = None
     content_type = None
     if mode == "image":
         if image_generator not in IMAGE_GENERATORS:
             raise HTTPException(422, "Select a supported target image generator.")
         if image_generator not in supported_image_generators(target):
-            raise HTTPException(422, "Select a compatible model: Ideogram 4 supports Fibo or Qwen3.5 Captioning, not GemmaUnseen.")
+            raise HTTPException(422, "Select a compatible model for the chosen image generator.")
         if not target.vision:
             raise HTTPException(422, "This target does not support image input.")
         if image is None:
@@ -186,7 +189,7 @@ async def generate(
             output = await generate_prompt(base_url=base_url, target=target, mode=mode,
                                            description=description,
                                            prompt=(FIBO_CAPTION_PROMPT if target.id == "Fibo" else
-                                                   build_caption_request("ideogram4")[0] if mode == "image" and image_generator == "ideogram4" else
+                                                   build_caption_request(image_generator)[0] if mode == "image" and target.id == CAPTION_MODEL_ID else
                                                    build_image_prompt(image_generator) if mode == "image"
                                                    else build_prompt(target.id, mode, description)), image=content,
                                            image_content_type=content_type,
@@ -202,17 +205,17 @@ async def generate(
 async def caption_folder(
     target_id: str = Form(...), images: list[UploadFile] = File(...),
     existing_captions: str = Form("[]", max_length=100000),
-    caption_style: str = Form("standard"), trigger_word: str = Form("", max_length=200),
+    caption_style: str = Form("character"), trigger_word: str = Form("", max_length=200),
 ) -> Response:
     """Caption uploaded images; return a ZIP, never write to a client-supplied path."""
     target = next((t for t in load_targets() if t.id == target_id), None)
     if target is None or target.id != CAPTION_MODEL_ID or not target.vision:
         raise HTTPException(422, "Captioning requires the registered Qwen3.5 Captioning model (Captioning).")
-    if caption_style not in CAPTION_STYLES:
-        raise HTTPException(422, "Select a supported caption style.")
+    if caption_style not in FOLDER_CAPTION_STYLES:
+        raise HTTPException(422, "Krea2 folder captioning supports Character or Style only.")
+    if not trigger_word.strip() or '\n' in trigger_word or '\r' in trigger_word:
+        raise HTTPException(422, "Krea2 captions require a nonempty, single-line trigger word.")
     trigger_word = trigger_word.strip()
-    if caption_style in TAGGED_CAPTION_STYLES and (not trigger_word or '\n' in trigger_word or '\r' in trigger_word):
-        raise HTTPException(422, "Tagged captions require a nonempty, single-line trigger word.")
     caption_prompt, instruction = build_caption_request(caption_style, trigger_word)
     try:
         existing = json.loads(existing_captions)
@@ -220,12 +223,11 @@ async def caption_folder(
         raise HTTPException(422, "Existing captions must be a JSON list of filenames.") from exc
     if not isinstance(existing, list) or not all(isinstance(name, str) for name in existing):
         raise HTTPException(422, "Existing captions must be a JSON list of filenames.")
-    suffix = ".json" if caption_style == "ideogram4" else ".txt"
-    validate_batch(images, existing, suffix)
+    validate_batch(images, existing)
     try:
         # No model startup is needed when every image already has a caption.
         skipped = {name.casefold() for name in existing}
-        pending = any(caption_filename(image.filename or '', suffix).casefold() not in skipped for image in images)
+        pending = any(caption_filename(image.filename or '').casefold() not in skipped for image in images)
 
         async def infer(content: bytes, content_type: str) -> str:
             output = await generate_prompt(
@@ -234,15 +236,18 @@ async def caption_folder(
                 image_content_type=content_type, caption_style=caption_style,
             )
             if not isinstance(output, str):
-                raise ValueError("The caption model must return text or serialized JSON.")
+                raise ValueError("The caption model must return plain prose.")
+            output = output.strip()
+            if not output.startswith(trigger_word + ' '):
+                raise ValueError("The caption must begin with the exact trigger word followed by a space and prose.")
             return output
 
         if pending:
             async with inference_session(target) as base_url:
-                archive, counts = await caption_batch(images, existing, infer, suffix=suffix)
+                archive, counts = await caption_batch(images, existing, infer)
         else:
             # caption_batch skips every image without invoking infer().
-            archive, counts = await caption_batch(images, existing, infer, suffix=suffix)
+            archive, counts = await caption_batch(images, existing, infer)
     except NotImplementedError as exc:
         raise HTTPException(501, str(exc)) from exc
     finally:

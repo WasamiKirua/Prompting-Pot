@@ -248,13 +248,13 @@ def test_caption_cleanup_only_after_whole_batch(api, monkeypatch):
         assert api.lock.locked()
         api.stop.assert_not_awaited()
         calls.append("caption")
-        return "a flower"
+        return "TOK stands beside a flower."
 
     monkeypatch.setattr(backend, "generate_prompt", infer)
     with TestClient(backend.app) as client:
         response = client.post(
             "/api/caption",
-            data={"target_id": "vision"},
+            data={"target_id": "vision", "trigger_word": "TOK"},
             files=[
                 ("images", (f"{i}.png", buffer.getvalue(), "image/png"))
                 for i in range(2)

@@ -42,7 +42,7 @@ async def generate_caption(
     instruction: str,
     image: bytes,
     content_type: str,
-    caption_style: str = "standard",
+    caption_style: str = "character",
 ) -> str:
     """Use server defaults for text; constrain and validate Ideogram JSON output."""
     options: dict[str, Any] = {}
@@ -134,7 +134,7 @@ def validate_image(content: bytes, content_type: str, *, caption: bool = False) 
         ) from exc
 
 
-def caption_filename(filename: str, suffix: str = ".txt") -> str:
+def caption_filename(filename: str) -> str:
     """Accept flat filenames only; never trust uploaded paths for ZIP entries."""
     if not filename or filename in {".", ".."} or any(c in filename for c in "/\\\x00"):
         raise HTTPException(422, "Upload top-level filenames, not folder paths.")
@@ -143,32 +143,20 @@ def caption_filename(filename: str, suffix: str = ".txt") -> str:
         raise HTTPException(
             422, "Captioning accepts PNG, JPEG, WebP, and BMP images only."
         )
-    if suffix not in {".txt", ".json"}:
-        raise HTTPException(422, "Unsupported caption sidecar format.")
-    name = path.with_suffix(suffix).name
-    if name.casefold() == "caption-manifest.json":
-        raise HTTPException(
-            422,
-            "Rename caption-manifest images to avoid colliding with the ZIP manifest.",
-        )
-    return name
+    return path.with_suffix(".txt").name
 
 
-def validate_batch(
-    images: list[UploadFile], existing: list[str], suffix: str = ".txt"
-) -> None:
+def validate_batch(images: list[UploadFile], existing: list[str]) -> None:
     """Reject ambiguous caption names and bound batch size before loading a model."""
     if not 1 <= len(images) <= MAX_BATCH_IMAGES:
         raise HTTPException(422, "Select between 1 and 100 top-level images.")
     if any(
-        PurePosixPath(name).suffix.lower() not in {".txt", ".json"}
+        PurePosixPath(name).suffix.lower() != ".txt"
         or any(c in name for c in "/\\\x00")
         for name in existing
     ):
-        raise HTTPException(
-            422, "Existing captions must be flat .txt or .json filenames."
-        )
-    names = [caption_filename(image.filename or "", suffix) for image in images]
+        raise HTTPException(422, "Existing captions must be flat .txt filenames.")
+    names = [caption_filename(image.filename or "") for image in images]
     if len({name.casefold() for name in names}) != len(names):
         raise HTTPException(
             422,
@@ -184,8 +172,6 @@ async def caption_batch(
     images: list[UploadFile],
     existing: list[str],
     infer: Callable[[bytes, str], Awaitable[str]],
-    *,
-    suffix: str = ".txt",
 ) -> tuple[bytes, dict[str, int]]:
     """Produce UTF-8 sidecars and a per-file manifest in a downloadable ZIP.
 
@@ -193,7 +179,7 @@ async def caption_batch(
     inference failures are reported per file; integration stubs abort the batch.
     Upload streams are closed even when inference fails.
     """
-    validate_batch(images, existing, suffix)
+    validate_batch(images, existing)
     skipped = {name.casefold() for name in existing}
     counts = {"captioned": 0, "skipped": 0, "failed": 0}
     results: list[dict[str, str]] = []
@@ -203,7 +189,7 @@ async def caption_batch(
         with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
             for image in images:
                 filename = image.filename or ""
-                sidecar = caption_filename(filename, suffix)
+                sidecar = caption_filename(filename)
                 if sidecar.casefold() in skipped:
                     counts["skipped"] += 1
                     results.append({"image": filename, "status": "skipped"})
@@ -224,8 +210,6 @@ async def caption_batch(
                         raise ValueError(
                             "The caption model must return nonempty plain text."
                         )
-                    if suffix == ".json":
-                        caption = serialize_ideogram_caption(caption)
                     zip_file.writestr(sidecar, caption.strip() + "\n")
                     counts["captioned"] += 1
                     results.append(
