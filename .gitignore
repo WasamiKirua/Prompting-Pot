@@ -43,3 +43,6 @@ id_ecdsa
 /outputs/
 /evaluation-results/
 /audit-reports/
+
+# PLAN
+PLAN.md
