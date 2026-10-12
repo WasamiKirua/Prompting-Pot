@@ -16,6 +16,7 @@ A local image-to-prompt and folder-captioning workspace. FastAPI serves a vanill
   - [Context and output budgets](#context-and-output-budgets)
 - [Using the application](#using-the-application)
   - [From an image](#from-an-image)
+  - [From words](#from-words)
   - [Caption a folder](#caption-a-folder)
   - [Output controls](#output-controls)
 - [Caption and JSON formats](#caption-and-json-formats)
@@ -224,7 +225,18 @@ Gemma remains **excluded from Ideogram by user choice**. A live feasibility eval
 
 If a required model is missing, generation is disabled instead of silently choosing an unrelated model. Clear the generator selection to restore the unfiltered image-mode model choices.
 
-**From words is not connected yet** and returns HTTP 501. No sample prompt is fabricated.
+### From words
+
+Choose a target image generator and a local prompt-writing model, then describe the desired scene. No image is uploaded or required.
+
+| Target | Local models | Output |
+|---|---|---|
+| Krea2, Z-Image, FLUX.2 Klein, Anima, Qwen-Image-2.1 | GemmaUnseen (default) or Qwen3.5 | Generator-specific text prompt |
+| Ideogram 4 | Fibo (default) or Qwen3.5 | Validated JSON; native Fibo scene schema or Qwen's Ideogram schema |
+
+Generator rules are adapted to text-only scene creation, preserving your explicit details and requested writing while adding coherent visual details. Qwen's Ideogram path uses constrained decoding and the existing validator. Fibo uses its documented `<expand><full>` task with a **square (1.00) aspect-ratio default**, no image and native validation. Native Fibo JSON remains a different format; downstream Ideogram compatibility is not established merely by schema validation.
+
+Fibo text expansion passed two local smoke tests (fox in snow and a teapot scene), both producing validated native JSON. This is limited evidence, not a broad quality comparison. Empty, malformed or truncated output fails instead of returning a fabricated or partial prompt.
 
 ### Caption a folder
 
@@ -361,7 +373,7 @@ For distribution, publish the built image to your registry or use `docker save` 
 | Port 8080 occupied but API not ready | Inspect the existing service; the app refuses to start a competing llama-swap |
 | Wrong model choices after an update | Refresh with **Ctrl + Shift + R** |
 | HTTP 422 | Required image/model/style/trigger, supported model-generator pairing, filename collisions or limits |
-| HTTP 501 in From words | Text-only inference is not implemented |
+| HTTP 501 in From words | An older application build is running; update/rebuild, restart and refresh the browser |
 | HTTP 502 / invalid or truncated JSON | Server/template support, model output, context/output budget and memory; check logs |
 | HTTP 503 | Startup failure, missing configuration/executable, occupied port or readiness timeout |
 | Existing captions not skipped | Matching image stem and selected extension: `.txt` for text, `.json` for Ideogram |
@@ -376,7 +388,7 @@ If reusing an externally started llama-swap server, ensure it actually serves th
 - Treat it as a local, single-user application. Use **one worker/instance**; inference locks and process ownership are not shared across workers or replicas.
 - Prompts/images are not persisted by the application. The frontend never supplies server filesystem paths or shell commands.
 - No automatic inference retries, remote fallback or model streaming are implemented. Batch status is a busy state, not live per-image progress.
-- Text-only inference is unfinished. Different GPU layouts, model accuracy, larger inputs and arm64 need deployment-specific verification.
+- Different GPU layouts, text/image prompt quality, larger inputs and arm64 need deployment-specific verification.
 
 ## Technical reference
 
@@ -405,7 +417,7 @@ All templates live in `src/prompting_pot/prompts.py`; external reference scripts
 
 Fibo sends `special: true` and `skip_special_tokens: false`. `fibo_schema.py` vendors native validation/token processing, omitting the unused NumPy mask-rasterization helper. Invalid, duplicate-key, nonfinite or truncated native JSON fails rather than returning a partial result.
 
-`build_image_prompt()` selects Gemma's five generator-specific system templates. The Qwen-Image-2.1 generation template has been revised for standalone generation using the supplied PDF; single-image caption templates are separate. `FOLDER_CAPTION_STYLES` contains only Krea2 Character/Style prose templates; `build_caption_request()` also retains Qwen-Image-2.1 and Ideogram instructions for single-image use; Fibo uses `FIBO_CAPTION_PROMPT`. `ideogram_caption.py` owns Ideogram schema validation and canonical serialization, without requiring an Ideogram runtime. The generic text template and `TARGET_PROMPTS` remain available for future text integration; `build_prompt()` substitutes literal `{description}` without interpreting JSON braces. The retained generic image starter is not used by the connected endpoint.
+`build_image_prompt()` selects Gemma's five generator-specific system templates. The Qwen-Image-2.1 generation template has been revised for standalone generation using the supplied PDF; single-image caption templates are separate. `FOLDER_CAPTION_STYLES` contains only Krea2 Character/Style prose templates; `build_caption_request()` also retains Qwen-Image-2.1 and Ideogram instructions for single-image use; Fibo uses `FIBO_CAPTION_PROMPT`. `ideogram_caption.py` owns Ideogram schema validation and canonical serialization, without requiring an Ideogram runtime. `text_generation.py` sends text-only requests using `build_text_prompt()` for the chosen generator, schema-constrained Qwen JSON or Fibo's native expansion task. The legacy generic templates and `TARGET_PROMPTS` do not drive this connected path.
 
 The async OpenAI SDK uses its compatible HTTP client with proxy environment variables bypassed for local requests. HTTP/connection/timeout/empty-response failures are surfaced; no remote fallback or fabricated output is supplied.
 
@@ -415,7 +427,7 @@ Interactive documentation: `/docs`.
 
 - `GET /api/targets`: registered IDs/names with `vision`, `captioning`, `image_generators`, `analysis_only` and `text` workflow flags. Folder captioning accepts registered vision-capable `Captioning` and `GemmaUnseen` models only.
 - `GET /api/image-generators`: available generator IDs/display names, including `ideogram4`. The UI keeps the full generator list visible and filters the model dropdown; the backend checks model/generator compatibility.
-- `POST /api/generate`: multipart `target_id`, `mode` (`image` / `text`), `description`, plus required `image` and `image_generator` in image mode. Qwen/Fibo as-is single-image analysis rejects change instructions.
+- `POST /api/generate`: multipart `target_id`, `mode` (`image` / `text`), `description`, required `image_generator` in both modes, and required `image` only in image mode. Text mode rejects uploaded images and incompatible model/generator choices. Qwen/Fibo as-is single-image analysis rejects change instructions.
 - `POST /api/caption`: multipart `target_id` (`Captioning` or `GemmaUnseen`, vision-capable only), repeated `images`, `existing_captions` (JSON list of flat `.txt` filenames), `caption_style` (`character`, the default, or `style`) and required `trigger_word`. Removed format IDs return 422 before startup. Returns a ZIP of `.txt` captions and the manifest, with `X-captioned`, `X-skipped` and `X-failed` headers.
 - Generation success: `{"output": "prompt text or serialized JSON"}` or `{"output": {"general": {}, "objects": []}}` for native structured output. These illustrate response shapes, not fabricated model results.
 - Errors use FastAPI's standard `detail` field; batch inference/image failures are recorded per image in the manifest.
@@ -478,6 +490,8 @@ GitHub commits also publish your Git author name/email. Review your identity bef
 
 - [Supplied Qwen-Image-2.1 guide](Qwen21_Editguide.pdf): generation-template refinements draw on pages 11–16, 20–22, 25 and 27. Editing/multi-reference commands are deliberately excluded. The update has prompt-contract/regression tests; better downstream Qwen image quality remains to be established with comparison testing.
 
+- [Fibo supported tasks](https://huggingface.co/briaai/fibo-scene-analyzer): documents text-only scene expansion.
+- [Fibo GGUF usage](https://huggingface.co/briaai/fibo-scene-analyzer-gguf): documents `<expand>` support on llama.cpp.
 - [Ideogram 4 prompting guide](https://github.com/ideogram-oss/ideogram4/blob/main/docs/prompting.md)
 - [Ideogram 4 caption verifier](https://github.com/ideogram-oss/ideogram4/blob/main/src/ideogram4/caption_verifier.py)
 - [llama.cpp OpenAI-compatible request parsing](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/server-common.cpp)

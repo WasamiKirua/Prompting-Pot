@@ -231,7 +231,7 @@ def test_generation_cleanup_and_shutdown(api, monkeypatch, fail):
     with TestClient(backend.app) as client:
         response = client.post(
             "/api/generate",
-            data={"target_id": "vision", "mode": "text", "description": "flower"},
+            data={"target_id": "vision", "mode": "text", "description": "flower", "image_generator": "krea2"},
         )
         assert response.status_code == (501 if fail else 200)
         api.stop.assert_awaited_once()
@@ -271,7 +271,7 @@ def test_startup_errors_become_503(api):
     with TestClient(backend.app) as client:
         response = client.post(
             "/api/generate",
-            data={"target_id": "vision", "mode": "text", "description": "flower"},
+            data={"target_id": "vision", "mode": "text", "description": "flower", "image_generator": "krea2"},
         )
         assert response.status_code == 503
         assert "occupied" in response.json()["detail"]

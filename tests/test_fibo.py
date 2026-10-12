@@ -299,6 +299,6 @@ def test_model_capabilities(api):
     http, _, _ = api
     models = {entry["id"]: entry for entry in http.get("/api/targets").json()}
     assert models["Fibo"]["image_generators"] == ["ideogram4"]
-    assert models["Fibo"]["text"] is False and models["Fibo"]["captioning"] is False
+    assert models["Fibo"]["text"] is True and models["Fibo"]["captioning"] is False
     assert models["Fibo"]["analysis_only"] is True
     assert "ideogram4" not in models["GemmaUnseen"]["image_generators"]

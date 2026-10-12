@@ -202,9 +202,9 @@ test('clearing the generator restores model choices and selecting Ideogram restr
   assert.deepEqual(element('target').options.map(option => option.value), ['Captioning', 'Fibo']);
 });
 
-test('Fibo selects only Ideogram, disables changes, and is absent from text and caption modes', () => {
+test('Fibo supports Ideogram image/text workflows but stays absent from caption mode', () => {
   const { element, context } = setup();
-  vm.runInContext("targets = [{id: 'Fibo', vision: true, text: false, analysis_only: true, captioning: false, image_generators: ['ideogram4']}, {id: 'GemmaUnseen', vision: true, text: true, image_generators: ['krea2']}, {id: 'Captioning', vision: true, captioning: true}]; imageGenerators = [{id: 'ideogram4', name: 'Ideogram 4'}, {id: 'krea2', name: 'Krea2'}]", context);
+  vm.runInContext("targets = [{id: 'Fibo', vision: true, text: true, analysis_only: true, captioning: false, image_generators: ['ideogram4']}, {id: 'GemmaUnseen', vision: true, text: true, image_generators: ['krea2']}, {id: 'Captioning', vision: true, captioning: true}]; imageGenerators = [{id: 'ideogram4', name: 'Ideogram 4'}, {id: 'krea2', name: 'Krea2'}]", context);
   element('target').value = 'Fibo';
   element('target').onchange();
   assert.equal(element('image-generator').value, 'ideogram4');
@@ -212,7 +212,9 @@ test('Fibo selects only Ideogram, disables changes, and is absent from text and 
   assert.equal(element('changes').disabled, true);
   assert.match(element('capability').textContent, /as-is/);
   element('mode-text').onclick();
-  assert.ok(!element('target').options.some(option => option.value === 'Fibo'));
+  assert.ok(element('target').options.some(option => option.value === 'Fibo'));
+  assert.equal(element('generator-fields').hidden, false);
+  assert.equal(element('image').required, false);
   element('mode-caption').onclick();
   assert.deepEqual(element('target').options.map(option => option.value), ['Captioning']);
   element('mode-image').onclick();
@@ -274,6 +276,50 @@ test('Fibo sends no stale changes and provides a native JSON download', async ()
   assert.equal(element('download').hidden, false);
   assert.equal(element('changes').disabled, true);
   assert.equal(element('format').textContent, 'JSON');
+});
+
+test('From words Ideogram offers only Fibo/Qwen and downloads generated JSON', async () => {
+  for (const model of ['Fibo', 'Captioning']) {
+    const { element, context } = setup(url => {
+      if (url !== '/api/generate') return new Promise(() => {});
+      return Promise.resolve({ok: true, json: async () => ({output: {general: {description: 'A scene'}, objects: []}})});
+    });
+    vm.runInContext("targets = [{id: 'GemmaUnseen', text: true}, {id: 'Captioning', text: true, analysis_only: true}, {id: 'Fibo', text: true, analysis_only: true}]; imageGenerators = [{id: 'ideogram4', name: 'Ideogram'}]", context);
+    element('mode-text').onclick();
+    element('image-generator').value = 'ideogram4'; element('image-generator').onchange();
+    assert.deepEqual(element('target').options.map(o => o.value), ['Captioning', 'Fibo']);
+    element('target').value = model; element('target').onchange();
+    element('description').value = 'A scene.';
+    await element('form').onsubmit(event());
+    assert.equal(element('format').textContent, 'JSON');
+    assert.equal(element('download').hidden, false);
+    assert.equal(element('download').download, model === 'Fibo' ? 'fibo-scene.json' : 'ideogram4-prompt.json');
+  }
+});
+
+test('From words offers both prose models for every non-Ideogram target and sends no image', async () => {
+  for (const generator of ['krea2', 'zimage', 'flux2-klein', 'anima', 'qwen-image-2.1']) {
+    for (const model of ['GemmaUnseen', 'Captioning']) {
+      let request;
+      const { element, context } = setup((url, options) => {
+        if (url !== '/api/generate') return new Promise(() => {});
+        request = options;
+        return Promise.resolve({ok: true, json: async () => ({output: 'A red boat.'})});
+      });
+      vm.runInContext(`targets = [{id: 'GemmaUnseen', vision: true, text: true}, {id: 'Captioning', vision: true, text: true, analysis_only: true}, {id: 'Fibo', text: true, analysis_only: true}]; imageGenerators = [{id: '${generator}', name: '${generator}'}]`, context);
+      element('mode-text').onclick();
+      element('image-generator').value = generator; element('image-generator').onchange();
+      assert.deepEqual(element('target').options.map(o => o.value), ['GemmaUnseen', 'Captioning']);
+      element('target').value = model; element('target').onchange();
+      element('description').value = 'A red boat.';
+      await element('form').onsubmit(event());
+      assert.equal(request.body.get('mode'), 'text');
+      assert.equal(request.body.get('image_generator'), generator);
+      assert.equal(request.body.get('target_id'), model);
+      assert.equal(request.body.has('image'), false);
+      assert.equal(element('download').hidden, true);
+    }
+  }
 });
 
 test('image generation requires both independent model selections', () => {

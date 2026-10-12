@@ -125,6 +125,16 @@
 - [x] Verify typing/lint and unchanged lifecycle/YAML checksums.
 - [ ] User: evaluate tag quality and exact trigger adherence with real model images.
 
+## From words: generator-specific text and JSON
+- [x] Confirm official Fibo expand task and GGUF guidance; verify installed Fibo on two text-only scenes with native validation and owned-process cleanup.
+- [x] Expose target-generator selection in From words: Gemma/Qwen for five prose targets; Fibo/Qwen for Ideogram JSON.
+- [x] Add text-only requests and generator instructions without fabricated image inputs; preserve image/folder workflows.
+- [x] Use schema-constrained Qwen Ideogram JSON and native Fibo expansion JSON; reject empty, invalid and truncated outputs.
+- [x] Document Fibo's square expansion default and the distinct native/Ideogram JSON formats.
+- [x] Verify live Qwen Krea2 prose + Ideogram JSON and Gemma Krea2 prose; this is limited smoke evidence, not broad quality equivalence.
+- [x] Verify 229 backend + 34 frontend tests, 100% text-adapter statement coverage, scoped typing/lint and Chromium text choices/downloads/tab round trips with mocked UI inference.
+- [x] Update README and script cache version; preserve YAMLs, registry and lifecycle implementation.
+
 ## Folder batch limit: 150 images
 - [x] Raise backend/frontend limit to 150; retain 100 MB total and 10 MB per image.
 - [x] Update UI, README and cache version; test acceptance at 150 and rejection at 151.

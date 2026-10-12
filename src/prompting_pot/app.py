@@ -17,8 +17,9 @@ from .captioning import (
 )
 from .prompts import (
     FOLDER_CAPTION_STYLES, FIBO_CAPTION_PROMPT, IMAGE_GENERATORS,
-    build_caption_request, build_image_prompt, build_prompt,
+    build_caption_request, build_image_prompt, build_text_prompt,
 )
+from .text_generation import generate_from_text
 from .fibo import analyze_image
 from .gemma_unseen import generate_from_image
 from .llama_swap import LlamaSwap
@@ -100,6 +101,11 @@ async def generate_prompt(
     caption_style: str = "character",
 ) -> str | dict[str, Any] | list[Any]:
     """Call the selected local vision model for image prompts or captions."""
+    if mode == "text":
+        if not image_generator:
+            raise ValueError("Text mode requires a target image generator.")
+        return await generate_from_text(base_url=base_url, model=target.id,
+                                        description=description, image_generator=image_generator)
     if target.id == "Fibo":
         if mode != "image" or image_generator != "ideogram4" or image is None or description.strip():
             raise ValueError("Fibo requires an as-is image analysis for Ideogram 4.")
@@ -147,7 +153,7 @@ async def get_targets():
     return [{"id": t.id, "name": t.name, "vision": t.vision,
              "captioning": t.id in {CAPTION_MODEL_ID, "GemmaUnseen"} and t.vision,
              "image_generators": supported_image_generators(t),
-             "analysis_only": t.id in {"Fibo", CAPTION_MODEL_ID}, "text": t.id != "Fibo"} for t in load_targets()]
+             "analysis_only": t.id in {"Fibo", CAPTION_MODEL_ID}, "text": t.id in {"Fibo", CAPTION_MODEL_ID, "GemmaUnseen"}} for t in load_targets()]
 
 
 @app.get("/api/image-generators")
@@ -167,10 +173,14 @@ async def generate(
     if mode not in {"image", "text"}:
         raise HTTPException(422, "Mode must be image or text.")
     description = description.strip()
-    if target.id == "Fibo" and (mode != "image" or description):
+    if target.id == "Fibo" and mode == "image" and description:
         raise HTTPException(422, "Fibo supports single-image as-is analysis only, without change instructions.")
     if target.id == CAPTION_MODEL_ID and mode == "image" and description:
         raise HTTPException(422, "Qwen caption analysis describes the image as-is, without change instructions.")
+    if mode == "text":
+        allowed = {"Fibo", CAPTION_MODEL_ID} if image_generator == "ideogram4" else {"GemmaUnseen", CAPTION_MODEL_ID}
+        if image_generator not in IMAGE_GENERATORS or target.id not in allowed:
+            raise HTTPException(422, "Select a compatible model and target image generator for text mode.")
     content = None
     content_type = None
     if mode == "image":
@@ -197,9 +207,9 @@ async def generate(
                                            prompt=(FIBO_CAPTION_PROMPT if target.id == "Fibo" else
                                                    build_caption_request(image_generator)[0] if mode == "image" and target.id == CAPTION_MODEL_ID else
                                                    build_image_prompt(image_generator) if mode == "image"
-                                                   else build_prompt(target.id, mode, description)), image=content,
+                                                   else build_text_prompt(image_generator)), image=content,
                                            image_content_type=content_type,
-                                           image_generator=image_generator if mode == "image" else None)
+                                           image_generator=image_generator)
     except NotImplementedError as exc:
         raise HTTPException(501, str(exc)) from exc
     except (RuntimeError, ValueError) as exc:

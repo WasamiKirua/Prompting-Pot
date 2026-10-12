@@ -16,6 +16,7 @@ def client(tmp_path, monkeypatch):
     (config / 'targets.json').write_text(json.dumps([
         {'id': 'vision', 'name': 'Vision', 'config': 'vision.yaml', 'vision': True},
         {'id': 'text', 'name': 'Text', 'config': 'text.yaml', 'vision': False},
+        {'id': 'GemmaUnseen', 'name': 'Gemma', 'config': 'unseen.yaml', 'vision': True},
     ]))
     monkeypatch.setattr(backend, 'CONFIG_DIR', config)
 
@@ -30,7 +31,7 @@ def test_page_and_targets(client):
     assert client.get('/').status_code == 200
     assert client.get('/static/app.js').status_code == 200
     targets = client.get('/api/targets').json()
-    assert len(targets) == 2
+    assert len(targets) == 3
     assert 'config_path' not in targets[0]
 
 
@@ -45,10 +46,10 @@ def test_invalid_input(client, data):
     assert client.post('/api/generate', data=data).status_code == 422
 
 
-def test_unconnected_backend(client):
+def test_text_rejects_unsupported_model_without_generator(client):
     response = client.post('/api/generate', data={'target_id': 'text', 'mode': 'text', 'description': 'tea shop'})
-    assert response.status_code == 501
-    assert 'not connected' in response.json()['detail']
+    assert response.status_code == 422
+    assert 'compatible model' in response.json()['detail']
 
 
 @pytest.mark.parametrize('output', ['a cozy tea shop', {'prompt': 'tea shop'}])
@@ -63,7 +64,7 @@ def test_wired_text_contract(client, monkeypatch, output):
 
     monkeypatch.setattr(backend, 'ensure_llama_swap', start)
     monkeypatch.setattr(backend, 'generate_prompt', infer)
-    response = client.post('/api/generate', data={'target_id': 'text', 'mode': 'text', 'description': ' tea shop '})
+    response = client.post('/api/generate', data={'target_id': 'GemmaUnseen', 'mode': 'text', 'description': ' tea shop ', 'image_generator': 'krea2'})
     assert response.json() == {'output': output}
 
 

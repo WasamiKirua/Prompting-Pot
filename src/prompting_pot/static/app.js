@@ -22,11 +22,12 @@ function status(message, error = false) {
 function usesGemmaGenerator() {
   return mode === 'image' && ['krea2', 'zimage', 'flux2-klein', 'anima'].includes($('image-generator').value);
 }
-function usesQwenGenerator() { return mode === 'image' && $('image-generator').value === 'qwen-image-2.1'; }
-function usesIdeogramGenerator() { return mode === 'image' && $('image-generator').value === 'ideogram4'; }
+function usesTextGenerator() { return mode === 'text' && ['krea2', 'zimage', 'flux2-klein', 'anima', 'qwen-image-2.1'].includes($('image-generator').value); }
+function usesQwenGenerator() { return (mode === 'image' || mode === 'text') && $('image-generator').value === 'qwen-image-2.1'; }
+function usesIdeogramGenerator() { return (mode === 'image' || mode === 'text') && $('image-generator').value === 'ideogram4'; }
 function renderTargetOptions() {
-  const gemmaOnly = usesGemmaGenerator(), fiboOnly = usesIdeogramGenerator(), qwenChoice = usesQwenGenerator();
-  const available = mode === 'caption' ? targets.filter(t => t.captioning) : mode === 'text' ? targets.filter(t => t.text !== false) : gemmaOnly ? targets.filter(t => t.id === 'GemmaUnseen') : fiboOnly ? targets.filter(t => ['Fibo', 'Captioning'].includes(t.id)) : qwenChoice ? targets.filter(t => ['GemmaUnseen', 'Captioning'].includes(t.id)) : targets;
+  const gemmaOnly = usesGemmaGenerator(), fiboOnly = usesIdeogramGenerator(), qwenChoice = usesQwenGenerator() || usesTextGenerator();
+  const available = mode === 'caption' ? targets.filter(t => t.captioning) : gemmaOnly ? targets.filter(t => t.id === 'GemmaUnseen') : fiboOnly ? targets.filter(t => ['Fibo', 'Captioning'].includes(t.id)) : qwenChoice ? targets.filter(t => ['GemmaUnseen', 'Captioning'].includes(t.id)) : mode === 'text' ? targets.filter(t => t.text !== false) : targets;
   const automatic = mode === 'caption' || gemmaOnly || fiboOnly || qwenChoice;
   $('target').replaceChildren();
   if (!automatic || !available.length) $('target').add(new Option(mode === 'caption' ? 'Captioning model not configured' : gemmaOnly ? 'GemmaUnseen model not configured' : fiboOnly ? 'Ideogram model not configured' : qwenChoice ? 'Qwen prompt model not configured' : 'Choose a local model', ''));
@@ -45,7 +46,7 @@ function renderImageGeneratorOptions() {
   updateTarget();
 }
 function updateTarget() {
-  const target = targets.find(t => t.id === $('target').value && (mode !== 'caption' || t.captioning) && (!usesGemmaGenerator() || t.id === 'GemmaUnseen') && (!usesIdeogramGenerator() || ['Fibo', 'Captioning'].includes(t.id)) && (!usesQwenGenerator() || ['GemmaUnseen', 'Captioning'].includes(t.id)));
+  const target = targets.find(t => t.id === $('target').value && (mode !== 'caption' || t.captioning) && (!usesGemmaGenerator() || t.id === 'GemmaUnseen') && (!usesIdeogramGenerator() || ['Fibo', 'Captioning'].includes(t.id)) && (!(usesQwenGenerator() || usesTextGenerator()) || ['GemmaUnseen', 'Captioning'].includes(t.id)));
   $('target').disabled = busy;
   const unsupported = target && (mode === 'text' ? target.text === false : !target.vision);
   const incompatible = mode === 'image' && target?.image_generators && !target.image_generators.includes($('image-generator').value);
@@ -57,7 +58,7 @@ function updateTarget() {
     : usesGemmaGenerator() && !targets.some(t => t.id === 'GemmaUnseen') ? 'Configure GemmaUnseen in config/targets.json to use this image generator.'
     : mode === 'image' && target?.analysis_only ? (target.id === 'Fibo' ? 'Fibo analyzes this image as-is for Ideogram 4 and returns native JSON.' : usesQwenGenerator() ? 'Qwen3.5 describes this image as-is in a standalone Qwen-Image-2.1 paragraph.' : 'Qwen3.5 describes this image as-is using the validated Ideogram 4 JSON schema.') + ' Change instructions are not supported.'
     : unsupported ? 'This model does not support the selected input mode.' : '';
-  $('generate').disabled = busy || !target || unsupported || incompatible || (mode === 'image' && !$('image-generator').value);
+  $('generate').disabled = busy || !target || unsupported || incompatible || (mode !== 'caption' && !$('image-generator').value);
 }
 function updateFolderSummary() {
   const existing = new Set(existingCaptions.map(name => name.toLowerCase()));
@@ -79,11 +80,12 @@ document.querySelectorAll('[data-mode]').forEach(button => {
     $('image-fields').hidden = mode !== 'image';
     $('text-fields').hidden = mode !== 'text';
     $('caption-fields').hidden = mode !== 'caption';
+    $('generator-fields').hidden = mode === 'caption';
     updateCaptionStyle();
     $('image').required = mode === 'image';
     $('description').required = mode === 'text';
     $('folder').required = mode === 'caption';
-    $('image-generator').required = mode === 'image';
+    $('image-generator').required = mode !== 'caption';
     $('target-label').textContent = mode === 'caption' ? 'Captioning model (local, vision-capable)' : 'Prompt-writing model (local)';
     $('generate').textContent = generationLabel();
     status(''); renderTargetOptions();
@@ -130,7 +132,7 @@ $('target').onchange = () => {
   if (mode === 'caption') captionTarget = $('target').value;
   else promptTarget = $('target').value;
   renderImageGeneratorOptions();
-  if (usesGemmaGenerator() || usesIdeogramGenerator() || usesQwenGenerator()) renderTargetOptions();
+  if (usesGemmaGenerator() || usesIdeogramGenerator() || usesQwenGenerator() || usesTextGenerator()) renderTargetOptions();
 };
 $('image-generator').onchange = renderTargetOptions;
 $('folder').onchange = () => {
@@ -177,10 +179,8 @@ $('form').onsubmit = async (event) => {
     data.set('existing_captions', JSON.stringify(existingCaptions));
   } else {
     data.set('mode', mode); data.set('description', description);
-    if (mode === 'image') {
-      data.set('image', $('image').files[0]);
-      data.set('image_generator', $('image-generator').value);
-    }
+    data.set('image_generator', $('image-generator').value);
+    if (mode === 'image') data.set('image', $('image').files[0]);
   }
   if (downloadUrl) { URL.revokeObjectURL(downloadUrl); downloadUrl = null; }
   $('download').hidden = true; $('download').removeAttribute('href');
@@ -215,14 +215,14 @@ $('form').onsubmit = async (event) => {
     $('empty').hidden = true; $('output').hidden = false;
     $('format').hidden = false; $('format').textContent = structured ? 'JSON' : 'TEXT';
     $('copy').disabled = !$('output').value; $('copy').textContent = 'Copy prompt';
-    $('output-title').textContent = target?.analysis_only ? (target.id === 'Fibo' ? 'Your Fibo scene analysis' : usesQwenGenerator() ? 'Your Qwen-Image-2.1 prompt' : 'Your Ideogram 4 JSON caption') : 'Your fresh prompt';
-    if (target?.analysis_only && structured) {
+    $('output-title').textContent = mode === 'text' ? (usesIdeogramGenerator() ? 'Your structured scene prompt' : 'Your fresh prompt') : target?.analysis_only ? (target.id === 'Fibo' ? 'Your Fibo scene analysis' : usesQwenGenerator() ? 'Your Qwen-Image-2.1 prompt' : 'Your Ideogram 4 JSON caption') : 'Your fresh prompt';
+    if (structured && (usesIdeogramGenerator() || (mode === 'image' && target?.analysis_only))) {
       downloadUrl = URL.createObjectURL(new Blob([$('output').value + '\n'], { type: 'application/json' }));
       $('download').href = downloadUrl; $('download').hidden = false;
-      $('download').download = target.id === 'Fibo' ? 'fibo-scene.json' : 'ideogram4-caption.json'; $('download').textContent = 'Download scene JSON ↓';
+      $('download').download = target.id === 'Fibo' ? 'fibo-scene.json' : mode === 'text' ? 'ideogram4-prompt.json' : 'ideogram4-caption.json'; $('download').textContent = 'Download scene JSON ↓';
       $('copy').textContent = 'Copy JSON';
     }
-    status(target?.analysis_only ? 'Your scene analysis is ready.' : 'Your prompt is ready.');
+    status(mode === 'image' && target?.analysis_only ? 'Your scene analysis is ready.' : 'Your prompt is ready.');
   } catch (error) { status(error.message || 'Could not reach the server. Try again.', true); }
   finally {
     busy = false;
