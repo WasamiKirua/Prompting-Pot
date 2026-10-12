@@ -19,6 +19,56 @@ function status(message, error = false) {
   $('status').textContent = message;
   $('status').classList.toggle('error', error);
 }
+function showProgress(message, processed = null, total = null) {
+  $('progress-panel').hidden = false;
+  $('progress-label').textContent = message;
+  const determinate = processed !== null && total > 0;
+  $('progress-bar').classList.toggle('indeterminate', !determinate);
+  $('progress-fill').style.width = determinate ? `${100 * processed / total}%` : '35%';
+  if (determinate) {
+    $('progress-bar').setAttribute('aria-valuemax', String(total));
+    $('progress-bar').setAttribute('aria-valuenow', String(processed));
+    $('progress-count').textContent = `${processed} / ${total}`;
+  } else {
+    $('progress-bar').removeAttribute('aria-valuenow');
+    $('progress-count').textContent = '';
+  }
+}
+async function readCaptionResult(response) {
+  if (!(response.headers.get('Content-Type') || '').includes('application/x-ndjson')) {
+    return {archive: await response.blob(), counts: Object.fromEntries(['captioned', 'skipped', 'failed'].map(key => [key, response.headers.get(`X-${key}`)]))};
+  }
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  let buffer = '', result = null;
+  function receive(line) {
+    if (!line.trim()) return;
+    const event = JSON.parse(line);
+    if (event.type === 'stage') showProgress(event.message);
+    else if (event.type === 'progress') {
+      showProgress(`Processing ${event.filename}`, event.processed, event.total);
+      status(`${event.counts.captioned} captioned · ${event.counts.skipped} skipped · ${event.counts.failed} failed`);
+    } else if (event.type === 'error') throw new Error(event.message);
+    else if (event.type === 'complete') {
+      const bytes = Uint8Array.from(atob(event.archive), char => char.charCodeAt(0));
+      result = {archive: new Blob([bytes], {type: 'application/zip'}), counts: event.counts};
+    }
+  }
+  try {
+    while (true) {
+      const {value, done} = await reader.read();
+      buffer += done ? decoder.decode() : decoder.decode(value, {stream: true});
+      let end;
+      while ((end = buffer.indexOf('\n')) !== -1) { receive(buffer.slice(0, end)); buffer = buffer.slice(end + 1); }
+      if (done) break;
+    }
+    if (buffer.trim()) receive(buffer);
+    if (!result) throw new Error('The progress connection ended before the ZIP was ready.');
+    return result;
+  } finally {
+    try { await reader.cancel(); } catch {}
+    reader.releaseLock();
+  }
+}
 function usesGemmaGenerator() {
   return mode === 'image' && ['krea2', 'zimage', 'flux2-klein', 'anima'].includes($('image-generator').value);
 }
@@ -189,18 +239,20 @@ $('form').onsubmit = async (event) => {
   document.querySelectorAll('input, select, [data-mode], #changes, #description, #remove-image, #browse-image').forEach(control => { control.disabled = true; });
   updateTarget(); $('generate').textContent = mode === 'caption' ? 'Captioning your folder…' : 'Growing your prompt…';
   $('output-panel')?.setAttribute('aria-busy', 'true');
+  showProgress(mode === 'caption' ? 'Uploading your batch…' : 'Waiting for local inference…');
   status(mode === 'caption' ? 'Processing the batch sequentially. Large folders may take a while…' : 'Waiting for your local model…');
   try {
-    const response = await fetch(mode === 'caption' ? '/api/caption' : '/api/generate', { method: 'POST', body: data });
+    const response = await fetch(mode === 'caption' ? '/api/caption' : '/api/generate', { method: 'POST', body: data, headers: mode === 'caption' ? {'Accept': 'application/x-ndjson'} : {} });
     if (!response.ok) {
       const result = await response.json();
       throw new Error(typeof result.detail === 'string' ? result.detail : 'Request rejected. Check your inputs and try again.');
     }
     if (mode === 'caption') {
-      downloadUrl = URL.createObjectURL(await response.blob());
+      const result = await readCaptionResult(response);
+      downloadUrl = URL.createObjectURL(result.archive);
       $('download').href = downloadUrl; $('download').hidden = false;
       $('download').download = 'captions.zip'; $('download').textContent = 'Download captions.zip ↓';
-      $('output').value = `${response.headers.get('X-captioned')} captioned · ${response.headers.get('X-skipped')} skipped · ${response.headers.get('X-failed')} failed\n\nDownload and extract captions.zip into your original image folder.\nSee caption-manifest.json inside the ZIP for per-image results.`;
+      $('output').value = `${result.counts.captioned} captioned · ${result.counts.skipped} skipped · ${result.counts.failed} failed\n\nDownload and extract captions.zip into your original image folder.\nSee caption-manifest.json inside the ZIP for per-image results.`;
       $('empty').hidden = true; $('output').hidden = false;
       $('format').hidden = false; $('format').textContent = 'BATCH';
       $('output-title').textContent = 'Your folder captions'; $('copy').textContent = 'Copy summary'; $('copy').disabled = false;
@@ -226,6 +278,7 @@ $('form').onsubmit = async (event) => {
   } catch (error) { status(error.message || 'Could not reach the server. Try again.', true); }
   finally {
     busy = false;
+    $('progress-panel').hidden = true;
     $('clear-output').disabled = !$('output').value;
     document.querySelectorAll('input, select, [data-mode], #changes, #description, #remove-image, #browse-image').forEach(control => { control.disabled = false; });
     updateTarget(); $('generate').textContent = generationLabel(); $('output-panel')?.removeAttribute('aria-busy');
@@ -236,6 +289,7 @@ $('clear-output').onclick = () => {
   if (downloadUrl) URL.revokeObjectURL(downloadUrl);
   downloadUrl = null;
   $('download').hidden = true; $('download').removeAttribute('href');
+  $('progress-panel').hidden = true;
   $('output').value = ''; $('output').hidden = true; $('empty').hidden = false;
   $('format').hidden = true; $('format').textContent = '';
   $('output-title').textContent = 'Your fresh prompt';

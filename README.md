@@ -256,6 +256,8 @@ Results download as `captions.zip`, containing UTF-8 sidecars and `caption-manif
 
 ### Output controls
 
+A solid-color progress bar follows the current light/dark theme, with a small flower beside its status. Folder captioning shows **processed / total images**, counting captioned, skipped and failed images alike—not promising that every processed image has a `.txt`. Upload/model preparation and single-image/text inference use an indeterminate waiting bar, never invented percentages. Motion is disabled when your system requests reduced motion. The bar clears on completion or error; final counts and the manifest explain batch outcomes.
+
 JSON is automatically pretty-printed. Output is selectable and vertically resizable.
 
 - **Copy** copies the prompt, JSON or batch summary.
@@ -387,7 +389,7 @@ If reusing an externally started llama-swap server, ensure it actually serves th
 - The application is **unauthenticated** and exposed on all requested host interfaces. Use a trusted network/firewall; do not expose it directly to the public Internet. Authentication, TLS and public reverse-proxy deployment are not included.
 - Treat it as a local, single-user application. Use **one worker/instance**; inference locks and process ownership are not shared across workers or replicas.
 - Prompts/images are not persisted by the application. The frontend never supplies server filesystem paths or shell commands.
-- No automatic inference retries, remote fallback or model streaming are implemented. Batch status is a busy state, not live per-image progress.
+- No automatic inference retries, remote fallback or token-by-token model streaming are implemented. Folder progress streams per-image outcomes around the inference requests; closing the connection cancels the application batch and releases its model lock/resources.
 - Different GPU layouts, text/image prompt quality, larger inputs and arm64 need deployment-specific verification.
 
 ## Technical reference
@@ -428,7 +430,7 @@ Interactive documentation: `/docs`.
 - `GET /api/targets`: registered IDs/names with `vision`, `captioning`, `image_generators`, `analysis_only` and `text` workflow flags. Folder captioning accepts registered vision-capable `Captioning` and `GemmaUnseen` models only.
 - `GET /api/image-generators`: available generator IDs/display names, including `ideogram4`. The UI keeps the full generator list visible and filters the model dropdown; the backend checks model/generator compatibility.
 - `POST /api/generate`: multipart `target_id`, `mode` (`image` / `text`), `description`, required `image_generator` in both modes, and required `image` only in image mode. Text mode rejects uploaded images and incompatible model/generator choices. Qwen/Fibo as-is single-image analysis rejects change instructions.
-- `POST /api/caption`: multipart `target_id` (`Captioning` or `GemmaUnseen`, vision-capable only), repeated `images`, `existing_captions` (JSON list of flat `.txt` filenames), `caption_style` (`character`, the default, or `style`) and required `trigger_word`. Removed format IDs return 422 before startup. Returns a ZIP of `.txt` captions and the manifest, with `X-captioned`, `X-skipped` and `X-failed` headers.
+- `POST /api/caption`: multipart `target_id` (`Captioning` or `GemmaUnseen`, vision-capable only), repeated `images`, `existing_captions` (JSON list of flat `.txt` filenames), `caption_style` (`character`, the default, or `style`) and required `trigger_word`. Removed format IDs return 422 before startup. By default, returns a ZIP of `.txt` captions and the manifest, with `X-captioned`, `X-skipped` and `X-failed` headers. With `Accept: application/x-ndjson` (used by the UI), streams newline-delimited `stage`, `progress` and terminal `complete` / `error` events. Progress carries processed/total counts, filename and outcome counts; completion carries counts and a base64-encoded ZIP that the browser decodes into the normal download. Input validation still returns ordinary HTTP errors; failures after streaming begins use an `error` event. No persistent jobs/files are created. Reverse proxies must allow unbuffered streaming.
 - Generation success: `{"output": "prompt text or serialized JSON"}` or `{"output": {"general": {}, "objects": []}}` for native structured output. These illustrate response shapes, not fabricated model results.
 - Errors use FastAPI's standard `detail` field; batch inference/image failures are recorded per image in the manifest.
 

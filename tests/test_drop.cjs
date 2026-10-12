@@ -10,12 +10,12 @@ function setup(fetchImpl = () => new Promise(() => {})) {
     if (!elements.has(id)) {
       const classes = new Set();
       elements.set(id, {
-        files: [], value: '', hidden: false, events: {}, options: [],
+        files: [], value: '', hidden: false, events: {}, options: [], style: {}, attributes: {},
         classList: {
           add: name => classes.add(name), remove: name => classes.delete(name),
           contains: name => classes.has(name), toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name),
         },
-        setAttribute() {}, removeAttribute() {}, contains: () => false, reportValidity: () => true,
+        setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, getAttribute(name) { return this.attributes[name] ?? null; }, contains: () => false, reportValidity: () => true,
         addEventListener(type, callback) { this.events[type] = callback; },
         click() { this.clicked = true; },
         replaceChildren(...children) { this.options = children; this.value = children[0]?.value || ''; },
@@ -34,7 +34,7 @@ function setup(fetchImpl = () => new Promise(() => {})) {
     Option: class { constructor(text, value) { this.text = text; this.value = value; } },
     localStorage: { getItem: () => 'light', setItem() {} },
     URL: { createObjectURL: () => 'blob:preview', revokeObjectURL() {} },
-    fetch: fetchImpl, FormData, Blob,
+    fetch: fetchImpl, FormData, Blob, TextDecoder, atob,
   });
   element('caption-style').value = 'character';
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/prompting_pot/static/app.js'), 'utf8'), context);
@@ -454,6 +454,57 @@ test('blank Krea2 trigger is rejected before uploading', async () => {
   await element('form').onsubmit(event());
   assert.equal(uploaded, false);
   assert.match(element('status').textContent, /trigger word/);
+});
+
+test('single prompt requests show indeterminate progress and reset it after completion', async () => {
+  for (const mode of ['image', 'text']) {
+    let finish;
+    const { element, context } = setup(url => {
+      if (url !== '/api/generate') return new Promise(() => {});
+      return new Promise(resolve => { finish = resolve; });
+    });
+    vm.runInContext(`mode = '${mode}'; targets = [{id: 'GemmaUnseen', vision: true, text: true}]`, context);
+    element('target').value = 'GemmaUnseen'; element('image-generator').value = 'krea2';
+    element('description').value = 'A boat.'; element('image').files = [new Blob(['image'], {type: 'image/png'})];
+    const pending = element('form').onsubmit(event());
+    assert.equal(element('progress-panel').hidden, false);
+    assert.equal(element('progress-bar').classList.contains('indeterminate'), true);
+    assert.equal(element('progress-bar').getAttribute('aria-valuenow'), null);
+    finish({ok: true, json: async () => ({output: 'A boat.'})});
+    await pending;
+    assert.equal(element('progress-panel').hidden, true);
+  }
+});
+
+test('progress bar distinguishes real counts from indeterminate waiting', () => {
+  const { element, context } = setup();
+  vm.runInContext("showProgress('Working', 2, 4)", context);
+  assert.equal(element('progress-fill').style.width, '50%');
+  assert.equal(element('progress-count').textContent, '2 / 4');
+  assert.equal(element('progress-bar').getAttribute('aria-valuenow'), '2');
+  vm.runInContext("showProgress('Waiting')", context);
+  assert.equal(element('progress-bar').classList.contains('indeterminate'), true);
+  assert.equal(element('progress-bar').getAttribute('aria-valuenow'), null);
+});
+
+test('caption stream decoder handles split Unicode chunks and the final ZIP', async () => {
+  const { element, context } = setup();
+  const events = [{type: 'stage', message: 'Starting'}, {type: 'progress', filename: 'café.png', processed: 1, total: 2, counts: {captioned: 1, skipped: 0, failed: 0}}, {type: 'complete', archive: Buffer.from('zip').toString('base64'), counts: {captioned: 1, skipped: 1, failed: 0}}];
+  const bytes = new TextEncoder().encode(events.map(event => JSON.stringify(event)).join('\n') + '\n');
+  context.streamResponse = {headers: {get: () => 'application/x-ndjson'}, body: new ReadableStream({start(controller) { for (let i = 0; i < bytes.length; i += 7) controller.enqueue(bytes.slice(i, i + 7)); controller.close(); }})};
+  const result = await vm.runInContext('readCaptionResult(streamResponse)', context);
+  assert.equal(await result.archive.text(), 'zip');
+  assert.equal(result.counts.skipped, 1);
+  assert.equal(element('progress-label').textContent, 'Processing café.png');
+  assert.equal(element('progress-fill').style.width, '50%');
+});
+
+test('caption stream errors and premature EOF do not create a download', async () => {
+  for (const event of [{type: 'error', message: 'Model startup failed'}, {type: 'stage', message: 'Waiting'}]) {
+    const { context } = setup();
+    context.streamResponse = {headers: {get: () => 'application/x-ndjson'}, body: new ReadableStream({start(controller) { controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + '\n')); controller.close(); }})};
+    await assert.rejects(vm.runInContext('readCaptionResult(streamResponse)', context), event.type === 'error' ? /Model startup failed/ : /ended before the ZIP/);
+  }
 });
 
 test('Browse opens the image picker', () => {

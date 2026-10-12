@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -19,6 +19,7 @@ from .prompts import (
     FOLDER_CAPTION_STYLES, FIBO_CAPTION_PROMPT, IMAGE_GENERATORS,
     build_caption_request, build_image_prompt, build_text_prompt,
 )
+from .progress import ProgressCallback, caption_progress_response
 from .text_generation import generate_from_text
 from .fibo import analyze_image
 from .gemma_unseen import generate_from_image
@@ -219,6 +220,7 @@ async def generate(
 
 @app.post("/api/caption")
 async def caption_folder(
+    request: Request,
     target_id: str = Form(...), images: list[UploadFile] = File(...),
     existing_captions: str = Form("[]", max_length=100000),
     caption_style: str = Form("character"), trigger_word: str = Form("", max_length=200),
@@ -240,35 +242,39 @@ async def caption_folder(
     if not isinstance(existing, list) or not all(isinstance(name, str) for name in existing):
         raise HTTPException(422, "Existing captions must be a JSON list of filenames.")
     validate_batch(images, existing)
-    try:
-        # No model startup is needed when every image already has a caption.
-        skipped = {name.casefold() for name in existing}
-        pending = any(caption_filename(image.filename or '').casefold() not in skipped for image in images)
+    async def run(on_progress: ProgressCallback | None = None) -> tuple[bytes, dict[str, int]]:
+        try:
+            skipped = {name.casefold() for name in existing}
+            pending = any(caption_filename(image.filename or '').casefold() not in skipped for image in images)
 
-        async def infer(content: bytes, content_type: str) -> str:
-            output = await generate_prompt(
-                base_url=base_url, target=target, mode="caption", description=instruction,
-                prompt=caption_prompt, image=content,
-                image_content_type=content_type, caption_style=caption_style,
-            )
-            if not isinstance(output, str):
-                raise ValueError("The caption model must return plain prose.")
-            output = output.strip()
-            if not output.startswith(trigger_word + ' '):
-                raise ValueError("The caption must begin with the exact trigger word followed by a space and prose.")
-            return output
+            async def infer(content: bytes, content_type: str) -> str:
+                output = await generate_prompt(
+                    base_url=base_url, target=target, mode="caption", description=instruction,
+                    prompt=caption_prompt, image=content,
+                    image_content_type=content_type, caption_style=caption_style,
+                )
+                if not isinstance(output, str):
+                    raise ValueError("The caption model must return plain prose.")
+                output = output.strip()
+                if not output.startswith(trigger_word + ' '):
+                    raise ValueError("The caption must begin with the exact trigger word followed by a space and prose.")
+                return output
 
-        if pending:
-            async with inference_session(target) as base_url:
-                archive, counts = await caption_batch(images, existing, infer)
-        else:
-            # caption_batch skips every image without invoking infer().
-            archive, counts = await caption_batch(images, existing, infer)
-    except NotImplementedError as exc:
-        raise HTTPException(501, str(exc)) from exc
-    finally:
-        for image in images:
-            await image.close()
+            if pending:
+                if on_progress is not None:
+                    await on_progress({"type": "stage", "message": "Starting or reusing your local model…"})
+                async with inference_session(target) as base_url:
+                    return await caption_batch(images, existing, infer, on_progress=on_progress)
+            return await caption_batch(images, existing, infer, on_progress=on_progress)
+        except NotImplementedError as exc:
+            raise HTTPException(501, str(exc)) from exc
+        finally:
+            for image in images:
+                await image.close()
+
+    if "application/x-ndjson" in request.headers.get("accept", ""):
+        return caption_progress_response(run)
+    archive, counts = await run()
     return Response(
         archive, media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="captions.zip"',

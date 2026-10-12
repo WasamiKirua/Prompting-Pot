@@ -172,6 +172,8 @@ async def caption_batch(
     images: list[UploadFile],
     existing: list[str],
     infer: Callable[[bytes, str], Awaitable[str]],
+    *,
+    on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> tuple[bytes, dict[str, int]]:
     """Produce UTF-8 sidecars and a per-file manifest in a downloadable ZIP.
 
@@ -185,6 +187,19 @@ async def caption_batch(
     results: list[dict[str, str]] = []
     archive = BytesIO()
     total = 0
+
+    async def report(filename: str) -> None:
+        if on_progress is not None:
+            await on_progress(
+                {
+                    "type": "progress",
+                    "processed": sum(counts.values()),
+                    "total": len(images),
+                    "filename": filename,
+                    "counts": counts.copy(),
+                }
+            )
+
     try:
         with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
             for image in images:
@@ -193,6 +208,7 @@ async def caption_batch(
                 if sidecar.casefold() in skipped:
                     counts["skipped"] += 1
                     results.append({"image": filename, "status": "skipped"})
+                    await report(filename)
                     continue
                 try:
                     content = await image.read(MAX_IMAGE_BYTES + 1)
@@ -233,6 +249,7 @@ async def caption_batch(
                     results.append(
                         {"image": filename, "status": "failed", "error": str(exc)}
                     )
+                await report(filename)
             zip_file.writestr(
                 "caption-manifest.json",
                 json.dumps({"counts": counts, "files": results}, indent=2),

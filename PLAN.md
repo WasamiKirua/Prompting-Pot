@@ -125,6 +125,16 @@
 - [x] Verify typing/lint and unchanged lifecycle/YAML checksums.
 - [ ] User: evaluate tag quality and exact trigger adherence with real model images.
 
+## Theme-colored progress
+- [x] Add a solid accent-colored progress bar with a flower/status, existing light/dark variables, accessible progress values and reduced-motion support.
+- [x] Stream actual folder processed/total counts, including captioned/skipped/failed outcomes; keep upload/startup and single prompts indeterminate.
+- [x] Preserve default ZIP API behavior; opt into request-scoped NDJSON via Accept, with progress/stage events and a base64 ZIP completion event.
+- [x] Bound the event queue and cancel/await workers on disconnect; verify upload closure, model-lock release and cleanup.
+- [x] Handle stream errors/premature EOF without downloads; reset progress after completion, failure and Clear.
+- [x] Verify real HTTP progress and ZIP download in Chromium with mocked inference, both theme colors, reduced motion and mobile layout.
+- [x] Verify 239 backend + 38 frontend tests, 100% progress-helper coverage, 94% combined caption/progress coverage, scoped type/lint/format checks and Compose validation.
+- [x] Update README and CSS/JS cache versions; preserve model configs, registry and lifecycle implementation.
+
 ## From words: generator-specific text and JSON
 - [x] Confirm official Fibo expand task and GGUF guidance; verify installed Fibo on two text-only scenes with native validation and owned-process cleanup.
 - [x] Expose target-generator selection in From words: Gemma/Qwen for five prose targets; Fibo/Qwen for Ideogram JSON.
