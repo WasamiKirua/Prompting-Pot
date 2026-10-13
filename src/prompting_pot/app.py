@@ -16,8 +16,8 @@ from .captioning import (
     validate_batch, validate_image,
 )
 from .prompts import (
-    FOLDER_CAPTION_STYLES, FIBO_CAPTION_PROMPT, IMAGE_GENERATORS,
-    build_caption_request, build_image_prompt, build_text_prompt,
+    FOLDER_CAPTION_STYLES, FOLDER_GENERATORS, FIBO_CAPTION_PROMPT, IMAGE_GENERATORS,
+    build_caption_request, build_folder_caption_request, build_image_prompt, build_text_prompt,
 )
 from .progress import ProgressCallback, caption_progress_response
 from .text_generation import generate_from_text
@@ -224,28 +224,37 @@ async def caption_folder(
     target_id: str = Form(...), images: list[UploadFile] = File(...),
     existing_captions: str = Form("[]", max_length=100000),
     caption_style: str = Form("character"), trigger_word: str = Form("", max_length=200),
+    caption_generator: str = Form("krea2"),
 ) -> Response:
     """Caption uploaded images; return a ZIP, never write to a client-supplied path."""
     target = next((t for t in load_targets() if t.id == target_id), None)
     if target is None or target.id not in {CAPTION_MODEL_ID, "GemmaUnseen"} or not target.vision:
         raise HTTPException(422, "Captioning requires registered Qwen3.5 Captioning (Captioning) or GemmaUnseen with vision support.")
-    if caption_style not in FOLDER_CAPTION_STYLES:
-        raise HTTPException(422, "Krea2 folder captioning supports Character or Style only.")
-    if not trigger_word.strip() or '\n' in trigger_word or '\r' in trigger_word:
-        raise HTTPException(422, "Krea2 captions require a nonempty, single-line trigger word.")
+    if caption_generator not in FOLDER_GENERATORS:
+        raise HTTPException(422, "Select a supported folder caption generator.")
+    json_caption = caption_generator == "ideogram4"
+    if json_caption:
+        if target.id != CAPTION_MODEL_ID or caption_style != "ideogram4" or trigger_word.strip():
+            raise HTTPException(422, "Ideogram folder captions require Qwen, the ideogram4 style and no trigger.")
+    else:
+        if caption_style not in FOLDER_CAPTION_STYLES:
+            raise HTTPException(422, "Prose folder captioning supports Character or Style only.")
+        if not trigger_word.strip() or '\n' in trigger_word or '\r' in trigger_word:
+            raise HTTPException(422, "Prose captions require a nonempty, single-line trigger word.")
     trigger_word = trigger_word.strip()
-    caption_prompt, instruction = build_caption_request(caption_style, trigger_word)
+    caption_prompt, instruction = build_folder_caption_request(caption_generator, caption_style, trigger_word)
+    suffix = ".json" if json_caption else ".txt"
     try:
         existing = json.loads(existing_captions)
     except json.JSONDecodeError as exc:
         raise HTTPException(422, "Existing captions must be a JSON list of filenames.") from exc
     if not isinstance(existing, list) or not all(isinstance(name, str) for name in existing):
         raise HTTPException(422, "Existing captions must be a JSON list of filenames.")
-    validate_batch(images, existing)
+    validate_batch(images, existing, suffix)
     async def run(on_progress: ProgressCallback | None = None) -> tuple[bytes, dict[str, int]]:
         try:
             skipped = {name.casefold() for name in existing}
-            pending = any(caption_filename(image.filename or '').casefold() not in skipped for image in images)
+            pending = any(caption_filename(image.filename or '', suffix).casefold() not in skipped for image in images)
 
             async def infer(content: bytes, content_type: str) -> str:
                 output = await generate_prompt(
@@ -254,9 +263,9 @@ async def caption_folder(
                     image_content_type=content_type, caption_style=caption_style,
                 )
                 if not isinstance(output, str):
-                    raise ValueError("The caption model must return plain prose.")
+                    raise ValueError("The caption model must return prose or serialized JSON.")
                 output = output.strip()
-                if not output.startswith(trigger_word + ' '):
+                if not json_caption and not output.startswith(trigger_word + ' '):
                     raise ValueError("The caption must begin with the exact trigger word followed by a space and prose.")
                 return output
 
@@ -264,8 +273,8 @@ async def caption_folder(
                 if on_progress is not None:
                     await on_progress({"type": "stage", "message": "Starting or reusing your local model…"})
                 async with inference_session(target) as base_url:
-                    return await caption_batch(images, existing, infer, on_progress=on_progress)
-            return await caption_batch(images, existing, infer, on_progress=on_progress)
+                    return await caption_batch(images, existing, infer, suffix=suffix, on_progress=on_progress)
+            return await caption_batch(images, existing, infer, suffix=suffix, on_progress=on_progress)
         except NotImplementedError as exc:
             raise HTTPException(501, str(exc)) from exc
         finally:

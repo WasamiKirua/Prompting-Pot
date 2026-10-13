@@ -36,6 +36,7 @@ function setup(fetchImpl = () => new Promise(() => {})) {
     URL: { createObjectURL: () => 'blob:preview', revokeObjectURL() {} },
     fetch: fetchImpl, FormData, Blob, TextDecoder, atob,
   });
+  element('caption-generator').value = 'krea2';
   element('caption-style').value = 'character';
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/prompting_pot/static/app.js'), 'utf8'), context);
   return { element, context };
@@ -336,7 +337,7 @@ test('image generation requires both independent model selections', () => {
   assert.equal(element('generate').disabled, true);
 });
 
-test('folder markup exposes only Krea2 Character and Style, without tagged formats', () => {
+test('folder prose markup exposes Character and Style, without tagged formats', () => {
   const html = fs.readFileSync(path.join(__dirname, '../src/prompting_pot/static/index.html'), 'utf8');
   const options = html.match(/<select id="caption-style"[^>]*>([\s\S]*?)<\/select>/)[1];
   assert.deepEqual([...options.matchAll(/<option value="([^"]+)"/g)].map(match => match[1]), ['character', 'style']);
@@ -390,6 +391,66 @@ test('caption folder selection includes BMP and ignores hidden files and subfold
   assert.match(element('folder-summary').textContent, /1 top-level images · 1 existing captions/);
 });
 
+test('folder targets preserve prose choices, filter Ideogram to Qwen and send JSON-specific skips', async () => {
+  let request;
+  const { element, context } = setup((url, options) => {
+    if (url !== '/api/caption') return new Promise(() => {});
+    request = options;
+    return Promise.resolve({ok: true, blob: async () => new Blob(['zip']), headers: {get: () => '1'}});
+  });
+  vm.runInContext("targets = [{id: 'GemmaUnseen', vision: true, captioning: true}, {id: 'Captioning', vision: true, captioning: true}, {id: 'Fibo', vision: true, captioning: false}]", context);
+  element('mode-caption').onclick();
+  for (const generator of ['krea2', 'zimage', 'qwen-image-2.1', 'anima']) {
+    element('caption-generator').value = generator; element('caption-generator').onchange();
+    assert.deepEqual(element('target').options.map(o => o.value), ['GemmaUnseen', 'Captioning']);
+    assert.equal(element('trigger-word').required, true);
+  }
+  element('folder').files = [Object.assign(new Blob(['image']), {name: 'image.png', webkitRelativePath: 'dataset/image.png'}), {name: 'image.txt', webkitRelativePath: 'dataset/image.txt'}, {name: 'kept.json', webkitRelativePath: 'dataset/kept.json'}];
+  element('folder').onchange();
+  element('caption-generator').value = 'ideogram4'; element('caption-generator').onchange();
+  assert.deepEqual(element('target').options.map(o => o.value), ['Captioning']);
+  assert.equal(element('caption-prose-fields').hidden, true);
+  assert.equal(element('trigger-word').required, false);
+  element('trigger-word').value = 'stale trigger';
+  await element('form').onsubmit(event());
+  assert.equal(request.body.get('caption_generator'), 'ideogram4');
+  assert.equal(request.body.get('caption_style'), 'ideogram4');
+  assert.equal(request.body.get('trigger_word'), '');
+  assert.deepEqual(JSON.parse(request.body.get('existing_captions')), ['kept.json']);
+});
+
+test('Ideogram folder mode does not fall back to Gemma when Qwen is missing', () => {
+  const { element, context } = setup();
+  vm.runInContext("targets = [{id: 'GemmaUnseen', vision: true, captioning: true}]", context);
+  element('mode-caption').onclick();
+  element('caption-generator').value = 'ideogram4'; element('caption-generator').onchange();
+  assert.equal(element('target').value, '');
+  assert.equal(element('generate').disabled, true);
+  assert.match(element('capability').textContent, /Configure Qwen3.5/);
+});
+
+test('folder upload permits 25 MB per image but retains the 100 MB total limit', async () => {
+  for (const [size, count, allowed] of [[25 * 1024 * 1024, 1, true], [25 * 1024 * 1024 + 1, 1, false], [25 * 1024 * 1024, 5, false]]) {
+    let uploaded = false;
+    const { element, context } = setup(url => {
+      if (url !== '/api/caption') return new Promise(() => {});
+      uploaded = true;
+      return Promise.resolve({ok: true, blob: async () => new Blob(['zip']), headers: {get: () => '0'}});
+    });
+    vm.runInContext("mode = 'caption'; targets = [{id: 'Captioning', vision: true, captioning: true}]", context);
+    element('target').value = 'Captioning'; element('trigger-word').value = 'TOK';
+    element('folder').files = Array.from({length: count}, (_, i) => {
+      const file = Object.assign(new Blob(['image']), {name: `${i}.png`, webkitRelativePath: `dataset/${i}.png`});
+      Object.defineProperty(file, 'size', {value: size});
+      return file;
+    });
+    element('folder').onchange();
+    await element('form').onsubmit(event());
+    assert.equal(uploaded, allowed);
+    if (!allowed) assert.match(element('status').textContent, /25 MB each and 100 MB total/);
+  }
+});
+
 test('folder upload accepts 150 images and rejects 151 before uploading', async () => {
   for (const count of [150, 151]) {
     let uploaded = false;
@@ -435,7 +496,7 @@ test('both Krea2 types skip only txt sidecars and ignore JSON files', () => {
   const { element, context } = setup();
   element('folder').files = ['a.png', 'b.png', 'a.txt', 'b.txt', 'a.json'].map(name => ({name, webkitRelativePath: `dataset/${name}`}));
   element('folder').onchange();
-  assert.equal(vm.runInContext('existingCaptions.length', context), 2);
+  assert.equal(vm.runInContext('existingCaptions.length', context), 3);
   for (const type of ['character', 'style']) {
     element('caption-style').value = type; element('caption-style').onchange();
     assert.match(element('folder-summary').textContent, /2 existing captions/);

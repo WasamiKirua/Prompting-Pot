@@ -21,6 +21,7 @@ from PIL import Image, UnidentifiedImageError
 from .ideogram_caption import IDEOGRAM_CAPTION_SCHEMA, serialize_ideogram_caption
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_CAPTION_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_BATCH_BYTES = 100 * 1024 * 1024
 MAX_BATCH_IMAGES = 150
 IMAGE_TYPES = {
@@ -121,8 +122,12 @@ def validate_image(content: bytes, content_type: str, *, caption: bool = False) 
             else "Use a PNG, JPEG, or WebP image."
         )
         raise HTTPException(422, message)
-    if not content or len(content) > MAX_IMAGE_BYTES:
-        raise HTTPException(422, "Image must be nonempty and no larger than 10 MB.")
+    maximum = MAX_CAPTION_IMAGE_BYTES if caption else MAX_IMAGE_BYTES
+    if not content or len(content) > maximum:
+        raise HTTPException(
+            422,
+            f"Image must be nonempty and no larger than {maximum // (1024 * 1024)} MB.",
+        )
     try:
         with Image.open(BytesIO(content)) as uploaded:
             if Image.MIME.get(uploaded.format or "") != content_type:
@@ -134,7 +139,7 @@ def validate_image(content: bytes, content_type: str, *, caption: bool = False) 
         ) from exc
 
 
-def caption_filename(filename: str) -> str:
+def caption_filename(filename: str, suffix: str = ".txt") -> str:
     """Accept flat filenames only; never trust uploaded paths for ZIP entries."""
     if not filename or filename in {".", ".."} or any(c in filename for c in "/\\\x00"):
         raise HTTPException(422, "Upload top-level filenames, not folder paths.")
@@ -143,27 +148,35 @@ def caption_filename(filename: str) -> str:
         raise HTTPException(
             422, "Captioning accepts PNG, JPEG, WebP, and BMP images only."
         )
-    return path.with_suffix(".txt").name
+    name = path.with_suffix(suffix).name
+    if name.casefold() == "caption-manifest.json":
+        raise HTTPException(
+            422,
+            "Rename caption-manifest images to avoid colliding with the ZIP manifest.",
+        )
+    return name
 
 
-def validate_batch(images: list[UploadFile], existing: list[str]) -> None:
+def validate_batch(
+    images: list[UploadFile], existing: list[str], suffix: str = ".txt"
+) -> None:
     """Reject ambiguous caption names and bound batch size before loading a model."""
     if not 1 <= len(images) <= MAX_BATCH_IMAGES:
         raise HTTPException(422, "Select between 1 and 150 top-level images.")
     if any(
-        PurePosixPath(name).suffix.lower() != ".txt"
+        PurePosixPath(name).suffix.lower() != suffix
         or any(c in name for c in "/\\\x00")
         for name in existing
     ):
-        raise HTTPException(422, "Existing captions must be flat .txt filenames.")
-    names = [caption_filename(image.filename or "") for image in images]
+        raise HTTPException(422, f"Existing captions must be flat {suffix} filenames.")
+    names = [caption_filename(image.filename or "", suffix) for image in images]
     if len({name.casefold() for name in names}) != len(names):
         raise HTTPException(
             422,
             "Images share a caption filename (for example photo.jpg and photo.png). Rename them first.",
         )
-    if any((image.size or 0) > MAX_IMAGE_BYTES for image in images):
-        raise HTTPException(422, "Each image must be no larger than 10 MB.")
+    if any((image.size or 0) > MAX_CAPTION_IMAGE_BYTES for image in images):
+        raise HTTPException(422, "Each caption image must be no larger than 25 MB.")
     if sum(image.size or 0 for image in images) > MAX_BATCH_BYTES:
         raise HTTPException(422, "A batch must be no larger than 100 MB.")
 
@@ -173,6 +186,7 @@ async def caption_batch(
     existing: list[str],
     infer: Callable[[bytes, str], Awaitable[str]],
     *,
+    suffix: str = ".txt",
     on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> tuple[bytes, dict[str, int]]:
     """Produce UTF-8 sidecars and a per-file manifest in a downloadable ZIP.
@@ -181,7 +195,7 @@ async def caption_batch(
     inference failures are reported per file; integration stubs abort the batch.
     Upload streams are closed even when inference fails.
     """
-    validate_batch(images, existing)
+    validate_batch(images, existing, suffix)
     skipped = {name.casefold() for name in existing}
     counts = {"captioned": 0, "skipped": 0, "failed": 0}
     results: list[dict[str, str]] = []
@@ -204,14 +218,14 @@ async def caption_batch(
         with ZipFile(archive, "w", ZIP_DEFLATED) as zip_file:
             for image in images:
                 filename = image.filename or ""
-                sidecar = caption_filename(filename)
+                sidecar = caption_filename(filename, suffix)
                 if sidecar.casefold() in skipped:
                     counts["skipped"] += 1
                     results.append({"image": filename, "status": "skipped"})
                     await report(filename)
                     continue
                 try:
-                    content = await image.read(MAX_IMAGE_BYTES + 1)
+                    content = await image.read(MAX_CAPTION_IMAGE_BYTES + 1)
                     total += len(content)
                     if total > MAX_BATCH_BYTES:
                         raise HTTPException(
@@ -226,6 +240,8 @@ async def caption_batch(
                         raise ValueError(
                             "The caption model must return nonempty plain text."
                         )
+                    if suffix == ".json":
+                        caption = serialize_ideogram_caption(caption)
                     zip_file.writestr(sidecar, caption.strip() + "\n")
                     counts["captioned"] += 1
                     results.append(

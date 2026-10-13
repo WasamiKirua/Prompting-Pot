@@ -146,6 +146,7 @@ def test_disconnecting_active_batch_releases_model_lock_and_uploads(api, monkeyp
             existing_captions="[]",
             caption_style="character",
             trigger_word="TOK",
+            caption_generator="krea2",
         )
         iterator = response.body_iterator
         await anext(iterator)

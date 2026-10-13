@@ -4,9 +4,15 @@ from io import BytesIO
 from zipfile import ZipFile
 
 import pytest
+from fastapi import HTTPException, UploadFile
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from prompting_pot.captioning import (
+    MAX_CAPTION_IMAGE_BYTES,
+    validate_batch,
+    validate_image,
+)
 from prompting_pot.prompts import (
     FOLDER_CAPTION_STYLES,
     TARGET_PROMPTS,
@@ -186,6 +192,32 @@ def test_invalid_image_and_json_output_reported_per_file(client, monkeypatch):
     assert response.headers["X-failed"] == "2"
     with ZipFile(BytesIO(response.content)) as archive:
         assert archive.namelist() == ["caption-manifest.json"]
+
+
+@pytest.mark.parametrize("extra", [0, 1])
+def test_folder_image_25mb_boundary(extra):
+    content = png()
+    content += b"\0" * (MAX_CAPTION_IMAGE_BYTES + extra - len(content))
+    if extra:
+        with pytest.raises(HTTPException, match="25 MB"):
+            validate_image(content, "image/png", caption=True)
+    else:
+        validate_image(content, "image/png", caption=True)
+        with pytest.raises(HTTPException, match="10 MB"):
+            validate_image(content, "image/png")
+
+
+@pytest.mark.parametrize("count", [4, 5])
+def test_folder_batch_total_stays_100mb(count):
+    images = [
+        UploadFile(file=BytesIO(), filename=f"{i}.png", size=MAX_CAPTION_IMAGE_BYTES)
+        for i in range(count)
+    ]
+    if count == 4:
+        validate_batch(images, [])
+    else:
+        with pytest.raises(HTTPException, match="100 MB"):
+            validate_batch(images, [])
 
 
 def test_batch_accepts_150_images(client):

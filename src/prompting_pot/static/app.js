@@ -75,9 +75,11 @@ function usesGemmaGenerator() {
 function usesTextGenerator() { return mode === 'text' && ['krea2', 'zimage', 'flux2-klein', 'anima', 'qwen-image-2.1'].includes($('image-generator').value); }
 function usesQwenGenerator() { return (mode === 'image' || mode === 'text') && $('image-generator').value === 'qwen-image-2.1'; }
 function usesIdeogramGenerator() { return (mode === 'image' || mode === 'text') && $('image-generator').value === 'ideogram4'; }
+function isIdeogramCaption() { return $('caption-generator').value === 'ideogram4'; }
+function captionSuffix() { return isIdeogramCaption() ? '.json' : '.txt'; }
 function renderTargetOptions() {
   const gemmaOnly = usesGemmaGenerator(), fiboOnly = usesIdeogramGenerator(), qwenChoice = usesQwenGenerator() || usesTextGenerator();
-  const available = mode === 'caption' ? targets.filter(t => t.captioning) : gemmaOnly ? targets.filter(t => t.id === 'GemmaUnseen') : fiboOnly ? targets.filter(t => ['Fibo', 'Captioning'].includes(t.id)) : qwenChoice ? targets.filter(t => ['GemmaUnseen', 'Captioning'].includes(t.id)) : mode === 'text' ? targets.filter(t => t.text !== false) : targets;
+  const available = mode === 'caption' ? targets.filter(t => t.captioning && (!isIdeogramCaption() || t.id === 'Captioning')) : gemmaOnly ? targets.filter(t => t.id === 'GemmaUnseen') : fiboOnly ? targets.filter(t => ['Fibo', 'Captioning'].includes(t.id)) : qwenChoice ? targets.filter(t => ['GemmaUnseen', 'Captioning'].includes(t.id)) : mode === 'text' ? targets.filter(t => t.text !== false) : targets;
   const automatic = mode === 'caption' || gemmaOnly || fiboOnly || qwenChoice;
   $('target').replaceChildren();
   if (!automatic || !available.length) $('target').add(new Option(mode === 'caption' ? 'Captioning model not configured' : gemmaOnly ? 'GemmaUnseen model not configured' : fiboOnly ? 'Ideogram model not configured' : qwenChoice ? 'Qwen prompt model not configured' : 'Choose a local model', ''));
@@ -96,12 +98,14 @@ function renderImageGeneratorOptions() {
   updateTarget();
 }
 function updateTarget() {
-  const target = targets.find(t => t.id === $('target').value && (mode !== 'caption' || t.captioning) && (!usesGemmaGenerator() || t.id === 'GemmaUnseen') && (!usesIdeogramGenerator() || ['Fibo', 'Captioning'].includes(t.id)) && (!(usesQwenGenerator() || usesTextGenerator()) || ['GemmaUnseen', 'Captioning'].includes(t.id)));
+  const target = targets.find(t => t.id === $('target').value && (mode !== 'caption' || (t.captioning && (!isIdeogramCaption() || t.id === 'Captioning'))) && (!usesGemmaGenerator() || t.id === 'GemmaUnseen') && (!usesIdeogramGenerator() || ['Fibo', 'Captioning'].includes(t.id)) && (!(usesQwenGenerator() || usesTextGenerator()) || ['GemmaUnseen', 'Captioning'].includes(t.id)));
   $('target').disabled = busy;
   const unsupported = target && (mode === 'text' ? target.text === false : !target.vision);
   const incompatible = mode === 'image' && target?.image_generators && !target.image_generators.includes($('image-generator').value);
   $('changes').disabled = busy || (mode === 'image' && !!target?.analysis_only);
-  $('capability').textContent = mode === 'caption' && !targets.some(t => t.captioning)
+  $('capability').textContent = mode === 'caption' && isIdeogramCaption() && !targets.some(t => t.id === 'Captioning' && t.captioning)
+    ? 'Configure Qwen3.5 Captioning with vision support for Ideogram folder captions.'
+    : mode === 'caption' && !targets.some(t => t.captioning)
     ? 'Configure Qwen3.5 Captioning or GemmaUnseen with vision support in config/targets.json to caption images.'
     : usesIdeogramGenerator() && !targets.some(t => ['Fibo', 'Captioning'].includes(t.id)) ? 'Configure Fibo or Qwen3.5 Captioning in config/targets.json to use Ideogram 4.'
     : usesQwenGenerator() && !targets.some(t => ['GemmaUnseen', 'Captioning'].includes(t.id)) ? 'Configure GemmaUnseen or Qwen3.5 Captioning to use Qwen-Image-2.1.'
@@ -112,17 +116,23 @@ function updateTarget() {
 }
 function updateFolderSummary() {
   const existing = new Set(existingCaptions.map(name => name.toLowerCase()));
-  const skipped = folderImages.filter(file => existing.has(file.name.replace(captionImageExtension, '.txt').toLowerCase())).length;
+  const skipped = folderImages.filter(file => existing.has(file.name.replace(captionImageExtension, captionSuffix()).toLowerCase())).length;
   $('folder-summary').textContent = `${folderImages.length} top-level images · ${skipped} existing captions to skip. Subfolders are ignored.`;
 }
 function updateCaptionStyle() {
-  $('trigger-word').required = mode === 'caption';
+  const jsonCaption = isIdeogramCaption();
+  $('caption-prose-fields').hidden = jsonCaption;
+  $('trigger-word').required = mode === 'caption' && !jsonCaption;
+  $('caption-file-help').textContent = jsonCaption
+    ? 'Ideogram 4: Qwen-only as-is JSON. Matching .json captions are skipped; .txt files do not skip JSON generation.'
+    : 'Natural-sentence LoRA captions use .txt files. Matching .txt captions are skipped; .json files do not skip prose generation.';
   $('caption-rules').textContent = $('caption-style').value === 'character'
     ? 'Natural sentences about outfit, pose, lighting and background. Omit the face and fixed identity features; let the trigger carry identity.'
     : 'Natural sentences describing the visible content normally. Let the consistent aesthetic across the dataset carry the style.';
   if ($('folder').files.length) updateFolderSummary();
 }
 $('caption-style').onchange = () => { updateCaptionStyle(); status(''); };
+$('caption-generator').onchange = () => { updateCaptionStyle(); renderTargetOptions(); status(''); };
 document.querySelectorAll('[data-mode]').forEach(button => {
   button.onclick = () => {
     mode = button.dataset.mode;
@@ -188,7 +198,7 @@ $('image-generator').onchange = renderTargetOptions;
 $('folder').onchange = () => {
   const topLevel = [...$('folder').files].filter(file => file.webkitRelativePath.split('/').length === 2 && !file.name.startsWith('.'));
   folderImages = topLevel.filter(file => captionImageExtension.test(file.name));
-  existingCaptions = topLevel.filter(file => /\.txt$/i.test(file.name)).map(file => file.name);
+  existingCaptions = topLevel.filter(file => /\.(txt|json)$/i.test(file.name)).map(file => file.name);
   updateFolderSummary();
   status('');
 };
@@ -213,20 +223,23 @@ $('form').onsubmit = async (event) => {
   const data = new FormData();
   data.set('target_id', $('target').value);
   if (mode === 'caption') {
-    const style = $('caption-style').value;
-    const trigger = $('trigger-word').value.trim();
-    if (!['character', 'style'].includes(style)) { status('Choose Character or Style for Krea2 captioning.', true); return; }
-    if (!trigger || /[\r\n]/.test($('trigger-word').value) || $('trigger-word').value.length > 200) { status('Enter a single-line trigger word up to 200 characters.', true); return; }
+    const jsonCaption = isIdeogramCaption();
+    const style = jsonCaption ? 'ideogram4' : $('caption-style').value;
+    const trigger = jsonCaption ? '' : $('trigger-word').value.trim();
+    data.set('caption_generator', $('caption-generator').value);
+    if (!jsonCaption && !['character', 'style'].includes(style)) { status('Choose Character or Style for prose captioning.', true); return; }
+    if (!jsonCaption && (!trigger || /[\r\n]/.test($('trigger-word').value) || $('trigger-word').value.length > 200)) { status('Enter a single-line trigger word up to 200 characters.', true); return; }
     data.set('caption_style', style);
     data.set('trigger_word', trigger);
     if (!folderImages.length || folderImages.length > 150) { status('Choose a folder with 1–150 top-level images.', true); return; }
-    if (folderImages.some(file => !file.size || file.size > 10 * 1024 * 1024) || folderImages.reduce((size, file) => size + file.size, 0) > 100 * 1024 * 1024) {
-      status('Images must be nonempty, at most 10 MB each and 100 MB total.', true); return;
+    if (folderImages.some(file => !file.size || file.size > 25 * 1024 * 1024) || folderImages.reduce((size, file) => size + file.size, 0) > 100 * 1024 * 1024) {
+      status('Images must be nonempty, at most 25 MB each and 100 MB total.', true); return;
     }
-    const names = folderImages.map(file => file.name.replace(captionImageExtension, '.txt').toLowerCase());
+    const names = folderImages.map(file => file.name.replace(captionImageExtension, captionSuffix()).toLowerCase());
+    if (jsonCaption && names.includes('caption-manifest.json')) { status('Rename caption-manifest images to avoid colliding with the ZIP manifest.', true); return; }
     if (new Set(names).size !== names.length) { status('Some images share a caption filename. Rename them before captioning.', true); return; }
     folderImages.forEach(file => data.append('images', file, file.name));
-    data.set('existing_captions', JSON.stringify(existingCaptions));
+    data.set('existing_captions', JSON.stringify(existingCaptions.filter(name => name.toLowerCase().endsWith(captionSuffix()))));
   } else {
     data.set('mode', mode); data.set('description', description);
     data.set('image_generator', $('image-generator').value);

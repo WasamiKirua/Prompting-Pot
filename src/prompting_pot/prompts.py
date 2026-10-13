@@ -204,6 +204,38 @@ def build_caption_request(style: str, trigger_word: str = "") -> tuple[str, str]
     return CAPTION_STYLES[style], instruction
 
 
+FOLDER_GENERATORS = {
+    key: IMAGE_GENERATORS[key]
+    for key in ("krea2", "zimage", "qwen-image-2.1", "anima", "ideogram4")
+}
+
+
+def build_folder_caption_request(
+    generator: str, style: str, trigger_word: str = ""
+) -> tuple[str, str]:
+    """Keep LoRA identity/style rules while adding target-specific visual guidance."""
+    if generator == "ideogram4":
+        return build_caption_request("ideogram4")
+    prompt, instruction = build_caption_request(style, trigger_word)
+    prompt = prompt.replace(
+        "Caption images for a Krea2 ",
+        f"Caption images for a {FOLDER_GENERATORS[generator]} ",
+    )
+    guidance = {
+        "krea2": "",
+        "zimage": "For Z-Image, use concrete spatial relationships, garment/material textures and lighting direction. Do not add camera flags, quality tags or optimization sections.",
+        "qwen-image-2.1": "For Qwen-Image-2.1, make spatial relationships and lighting clear. Preserve clearly readable scene text in double quotes when relevant, never invent unreadable text. Do not add editing commands, canvas metadata or optimization sections.",
+        "anima": "For Anima, describe visible actions, garments, props and spatial relationships clearly for illustrated or anime scenes. Do not turn the caption into booru tags or introduce aesthetic labels describing the shared style.",
+    }[generator]
+    if guidance:
+        prompt += (
+            "\n"
+            + guidance
+            + " The selected Character/Style rules above take precedence; never describe forbidden fixed identity features in Character mode."
+        )
+    return prompt, instruction
+
+
 def build_text_prompt(image_generator: str) -> str:
     """Adapt generator rules to a supplied scene, never a nonexistent reference."""
     if image_generator == "ideogram4":

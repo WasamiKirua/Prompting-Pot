@@ -125,6 +125,19 @@
 - [x] Verify typing/lint and unchanged lifecycle/YAML checksums.
 - [ ] User: evaluate tag quality and exact trigger adherence with real model images.
 
+## Folder images: 25 MB per file
+- [x] Raise folder-caption image validation/read limits to 25 MB; retain 150 images / 100 MB total and the 10 MB single-image limit.
+- [x] Update browser validation, help text, README and cache version; verify boundary and aggregate-limit regressions.
+
+## Restored folder caption targets
+- [x] Keep Krea2 default; restore Z-Image, Qwen-Image-2.1 and Anima with Character/Style prose and required triggers, using Qwen or Gemma.
+- [x] Add target-specific prose guidance while retaining identity exclusions and natural sentences; do not restore comma-tag formats.
+- [x] Restore Ideogram folders as Qwen-only, as-is validated JSON without LoRA controls or triggers; keep Fibo out of folder mode.
+- [x] Restore extension-specific skipping/sidecars and JSON manifest-collision protection; preserve streaming progress and ZIP API.
+- [x] Preserve prose inputs/model preferences when switching targets; disable Ideogram generation if Qwen is unavailable.
+- [x] Update README/API and script cache version; verify 264 backend + 40 frontend tests and Chromium target/JSON download behavior with mocked inference.
+- [x] Keep image/text workflows, model/YAML configuration, registry and lifecycle source unchanged.
+
 ## Theme-colored progress
 - [x] Add a solid accent-colored progress bar with a flower/status, existing light/dark variables, accessible progress values and reduced-motion support.
 - [x] Stream actual folder processed/total counts, including captioned/skipped/failed outcomes; keep upload/startup and single prompts indeterminate.
