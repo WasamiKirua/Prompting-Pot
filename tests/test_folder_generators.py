@@ -19,6 +19,10 @@ image = caption_fixtures.image
 def test_prose_folder_targets(api, sdk, generator, model, style):
     http, _, _ = api
     client, _ = sdk
+    if style == "style":
+        client.chat.completions.create.return_value.choices[0].message.content = (
+            "TOK style depicts a woman wearing a jacket."
+        )
     response = http.post(
         "/api/caption",
         data={

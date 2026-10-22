@@ -16,6 +16,7 @@ macros:
 models:
   GemmaUnseen:
     cmd: |
-      llama-server --port ${PORT} ${rtx5090} --model ${models_dir}/GemmaUnseen/UNSEEN_Gemma_4_26B_NSFW_Q8_0.gguf -ngl 99 -c 4096 --mmproj ${models_dir}/GemmaUnseen/mmproj-gemma4-vision-f16.gguf
+      # llama-server --port ${PORT} ${rtx5090} --model ${models_dir}/GemmaUnseen/UNSEEN_Gemma_4_26B_NSFW_Q8_0.gguf -ngl 99 -c 4096 --mmproj ${models_dir}/GemmaUnseen/mmproj-gemma4-vision-f16.gguf
+      llama-server --port ${PORT} ${rtx5060} --model ${models_dir}/GemmaUnseen/UNSEEN_Gemma_4_12B_NSFW-Q4_K_M.gguf -ngl 99 -c 4096 --mmproj ${models_dir}/GemmaUnseen/mmproj-F16-12B.gguf
     aliases:
-      - "26B_NSFW"
+      - "12B_NSFW"

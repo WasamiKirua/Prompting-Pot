@@ -217,6 +217,48 @@ def test_caption_models_require_vision(api, model):
     start.assert_not_awaited()
 
 
+@pytest.mark.parametrize("model", ["Captioning", "GemmaUnseen"])
+def test_style_caption_rejects_trigger_as_subject(api, sdk, model):
+    http, _, _ = api
+    client, _ = sdk
+    client.chat.completions.create.return_value = completion(
+        "takatoy999 sits beside a window."
+    )
+    response = http.post(
+        "/api/caption",
+        data={
+            "target_id": model,
+            "caption_style": "style",
+            "trigger_word": "takatoy999",
+        },
+        files=[image()],
+    )
+    assert response.headers["X-failed"] == "1"
+    assert response.headers["X-captioned"] == "0"
+    with ZipFile(BytesIO(response.content)) as archive:
+        assert "image.txt" not in archive.namelist()
+
+
+@pytest.mark.parametrize("model", ["Captioning", "GemmaUnseen"])
+def test_style_caption_keeps_trigger_as_style_label(api, sdk, model):
+    http, _, _ = api
+    client, _ = sdk
+    text = "takatoy999 style depicts a woman sitting beside a window."
+    client.chat.completions.create.return_value = completion(text)
+    response = http.post(
+        "/api/caption",
+        data={
+            "target_id": model,
+            "caption_style": "style",
+            "trigger_word": "takatoy999",
+        },
+        files=[image()],
+    )
+    assert response.headers["X-captioned"] == "1"
+    with ZipFile(BytesIO(response.content)) as archive:
+        assert archive.read("image.txt").decode().strip() == text
+
+
 def test_caption_model_metadata(api):
     http, _, _ = api
     models = {model["id"]: model for model in http.get("/api/targets").json()}
@@ -231,7 +273,10 @@ def test_caption_model_metadata(api):
 def test_endpoint_caption_types_skip_and_bmp(api, sdk, model, style, trigger):
     http, start, stop = api
     client, factory = sdk
-    text = f"{trigger} wears a blue jacket beside a window. Soft light falls from the left."
+    prefix = f"{trigger} style depicts a woman who" if style == "style" else trigger
+    text = (
+        f"{prefix} wears a blue jacket beside a window. Soft light falls from the left."
+    )
     client.chat.completions.create.return_value = completion(text)
     response = http.post(
         "/api/caption",

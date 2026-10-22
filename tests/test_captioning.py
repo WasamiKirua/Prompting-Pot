@@ -220,26 +220,26 @@ def test_folder_batch_total_stays_100mb(count):
             validate_batch(images, [])
 
 
-def test_batch_accepts_150_images(client):
-    names = [f"{i}.png" for i in range(150)]
+def test_batch_accepts_250_images(client):
+    names = [f"{i}.png" for i in range(250)]
     response = client.post(
         "/api/caption",
         data={
             "target_id": "vision",
             "trigger_word": "TOK",
-            "existing_captions": json.dumps([f"{i}.txt" for i in range(150)]),
+            "existing_captions": json.dumps([f"{i}.txt" for i in range(250)]),
         },
         files=files(*names),
     )
     assert response.status_code == 200
-    assert response.headers["X-skipped"] == "150"
+    assert response.headers["X-skipped"] == "250"
 
 
 def test_batch_image_count_limit(client):
     response = client.post(
         "/api/caption",
         data={"target_id": "vision", "trigger_word": "TOK"},
-        files=files(*(f"{i}.png" for i in range(151))),
+        files=files(*(f"{i}.png" for i in range(251))),
     )
     assert response.status_code == 422
 

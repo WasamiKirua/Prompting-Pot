@@ -19,11 +19,12 @@ from openai import (
 from PIL import Image, UnidentifiedImageError
 
 from .ideogram_caption import IDEOGRAM_CAPTION_SCHEMA, serialize_ideogram_caption
+from .moss_caption import MOSS_CAPTION_SCHEMA, serialize_moss_caption
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_CAPTION_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_BATCH_BYTES = 100 * 1024 * 1024
-MAX_BATCH_IMAGES = 150
+MAX_BATCH_IMAGES = 250
 IMAGE_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -45,20 +46,30 @@ async def generate_caption(
     content_type: str,
     caption_style: str = "character",
 ) -> str:
-    """Use server defaults for text; constrain and validate Ideogram JSON output."""
+    """Use server defaults for text; constrain and validate Ideogram/MOSS JSON."""
     options: dict[str, Any] = {}
-    if caption_style == "ideogram4":
+    if caption_style in {"ideogram4", "moss"}:
         options = {
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "ideogram4_caption",
-                    "schema": IDEOGRAM_CAPTION_SCHEMA,
+                    "name": f"{caption_style}_caption",
+                    "schema": (
+                        MOSS_CAPTION_SCHEMA
+                        if caption_style == "moss"
+                        else IDEOGRAM_CAPTION_SCHEMA
+                    ),
                 },
             },
-            "max_tokens": 4096,
+            "max_tokens": (
+                2000 if caption_style == "moss" and model == "GemmaUnseen" else 4096
+            ),
             "extra_body": {"reasoning": "off"},
         }
+    if caption_style == "moss":
+        options["extra_body"]["chat_template_kwargs"] = {"enable_thinking": False}
+        if model == "GemmaUnseen":
+            options["temperature"] = 0.7
     encoded = base64.b64encode(image).decode("ascii")
     try:
         async with AsyncOpenAI(
@@ -103,12 +114,16 @@ async def generate_caption(
         ) from exc
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError("The caption model returned no caption.")
-    if caption_style == "ideogram4":
+    if caption_style in {"ideogram4", "moss"}:
         if result.choices[0].finish_reason == "length":
             raise RuntimeError(
-                "Ideogram JSON caption was truncated; increase the output/context budget."
+                f"{caption_style} JSON caption was truncated; increase the output/context budget."
             )
-        return serialize_ideogram_caption(content)
+        return (
+            serialize_moss_caption(content)
+            if caption_style == "moss"
+            else serialize_ideogram_caption(content)
+        )
     return content.strip()
 
 
@@ -162,7 +177,7 @@ def validate_batch(
 ) -> None:
     """Reject ambiguous caption names and bound batch size before loading a model."""
     if not 1 <= len(images) <= MAX_BATCH_IMAGES:
-        raise HTTPException(422, "Select between 1 and 150 top-level images.")
+        raise HTTPException(422, "Select between 1 and 250 top-level images.")
     if any(
         PurePosixPath(name).suffix.lower() != suffix
         or any(c in name for c in "/\\\x00")
@@ -187,6 +202,7 @@ async def caption_batch(
     infer: Callable[[bytes, str], Awaitable[str]],
     *,
     suffix: str = ".txt",
+    caption_style: str = "character",
     on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> tuple[bytes, dict[str, int]]:
     """Produce UTF-8 sidecars and a per-file manifest in a downloadable ZIP.
@@ -241,7 +257,11 @@ async def caption_batch(
                             "The caption model must return nonempty plain text."
                         )
                     if suffix == ".json":
-                        caption = serialize_ideogram_caption(caption)
+                        caption = (
+                            serialize_moss_caption(caption)
+                            if caption_style == "moss"
+                            else serialize_ideogram_caption(caption)
+                        )
                     zip_file.writestr(sidecar, caption.strip() + "\n")
                     counts["captioned"] += 1
                     results.append(

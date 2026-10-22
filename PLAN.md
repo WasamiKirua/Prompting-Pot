@@ -125,6 +125,34 @@
 - [x] Verify typing/lint and unchanged lifecycle/YAML checksums.
 - [ ] User: evaluate tag quality and exact trigger adherence with real model images.
 
+## Style LoRA trigger role correction
+- [x] Require Style prose to start with TRIGGER style depicts and name the actual subject separately; prohibit interpreting the style trigger as a character.
+- [x] Apply the shared rule to Qwen/Gemma and all prose folder targets; keep Character and JSON caption paths unchanged.
+- [x] Validate the required prefix and reject identity-like openings without writing a sidecar; add both-model regression tests using takatoy999.
+- [x] Update README, UI hint and script version. Existing captions are still skipped and must be moved aside to recaption.
+
+## MOSS-Image-Base target
+- [x] Add MOSS to image, words and folder workflows with both GemmaUnseen and Qwen3.5; preserve other target/model restrictions.
+- [x] Use guide-derived English natural-language positive generation prompts, exact scene text/line-break guidance and optional image changes; defer tags/experimental layout JSON.
+- [x] Add the separate guide recaption JSON schema: long/medium/short, normalized watermark boxes and borders; no LoRA type or trigger.
+- [x] Validate duplicate keys, required/nonempty fields, box ranges/order and border consistency; reject invalid/truncated outputs without sidecars.
+- [x] Keep bounded Gemma 2000 / Qwen 4096 JSON budgets with explicit thinking-disabled template requests; leave YAMLs/registry/lifecycle source unchanged.
+- [x] Preserve JSON-specific skipping, manifest-collision protection, streamed progress and ZIP downloads for both writers.
+- [x] Verify all six model/workflow live request combinations; final caption rechecks returned valid JSON from both. Watermark/OCR/border fidelity remains imperfect and needs manual review; one intermediate Gemma request returned no caption before explicitly disabling template thinking.
+- [x] Verify 304 backend + 43 frontend tests, 100% MOSS-validator coverage, scoped lint/type checks and Chromium workflow/download checks with mocked inference.
+- [x] Document downstream image settings separately from VLM inference and note the guide's larger/thinking-enabled recommendation is not applied. Downstream MOSS image quality remains unverified.
+
+## Krea2 generation prompt v2
+- [x] Adopt the user-supplied five-component order and comma-separated phrase format for From an image / From words, with structured breakdown plus a single-line ready-to-copy text block.
+- [x] Adapt to image grounding/optional changes or text-only scene expansion; preserve explicit writing/aspect ratio preferences without the old mandatory photographic suffix.
+- [x] Leave Character/Style LoRA caption prompts unchanged, as explicitly chosen; preserve user-controlled model/YAML settings.
+- [x] Verify prompt contracts and existing route regressions; live Gemma image + words and Qwen words checks all returned five components and a single copy line (3/3 format checks).
+- [x] Update README with format and Copy behavior. Downstream Krea2 image-quality improvement remains unverified.
+
+## Folder batch limit: 250 images
+- [x] Raise backend/frontend count limit to 250; retain 25 MB per file / 100 MB total.
+- [x] Update UI, README and cache version; test acceptance at 250 and rejection at 251.
+
 ## Folder images: 25 MB per file
 - [x] Raise folder-caption image validation/read limits to 25 MB; retain 150 images / 100 MB total and the 10 MB single-image limit.
 - [x] Update browser validation, help text, README and cache version; verify boundary and aggregate-limit regressions.

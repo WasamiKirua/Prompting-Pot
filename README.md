@@ -153,8 +153,8 @@ Current entries:
 
 | Registry ID | YAML | Supported workflow |
 |---|---|---|
-| `GemmaUnseen` | `unseen.yaml` | Prose folder training captions and single-image prompts for Krea2, Z-Image, FLUX.2 Klein, Anima and Qwen-Image-2.1 |
-| `Captioning` | `caption.yaml` | Prose/Ideogram folder captions and single-image Qwen-Image-2.1 text / Ideogram 4 JSON |
+| `GemmaUnseen` | `unseen.yaml` | Prose/MOSS folder captions and single-image prompts for Krea2, Z-Image, FLUX.2 Klein, Anima, Qwen-Image-2.1 and MOSS |
+| `Captioning` | `caption.yaml` | Prose/Ideogram/MOSS folder captions, Qwen-Image-2.1 and MOSS image prompts, and Ideogram image JSON |
 | `Fibo` | `fibo.yaml` | Single-image Ideogram workflow, using native Fibo JSON |
 
 These IDs are intentionally used instead of names from the reference scripts, such as `Qwen35Captioning`. Configurations must be registered YAML files inside `config/`; model startup verifies that the selected file exists.
@@ -210,9 +210,10 @@ Upload or drag/drop a **PNG, JPEG or WebP**, up to **10 MB**. All target image g
 |---|---|---|
 | Krea2, Z-Image, FLUX.2 Klein, Anima | GemmaUnseen only, selected automatically | Generator-specific prompt text |
 | Qwen-Image-2.1 | GemmaUnseen by default, or Qwen3.5 Captioning | Gemma prompt sections or a Qwen descriptive paragraph |
+| MOSS-Image-Base | GemmaUnseen by default, or Qwen3.5 Captioning | Natural-language positive prompt; optional changes supported by both |
 | Ideogram 4 | Fibo by default, or Qwen3.5 Captioning | JSON; the two models use different schemas |
 
-For **GemmaUnseen**, optionally describe changes. Empty changes or “as-is” request reconstruction without changes. Krea2, FLUX and Anima request raw prose; Z-Image and Qwen retain their original breakdowns/sections. Headings and code fences are preserved. The Qwen generation template uses the uploaded image only for Gemma's analysis: its copyable output describes the finished scene without downstream editing/reference instructions. Requested changes are expressed as final visual attributes. Detail follows scene complexity rather than a mandatory word count; composition, lighting, materials, palette and exact readable typography receive concrete descriptions.
+For **GemmaUnseen**, optionally describe changes. Empty changes or “as-is” request reconstruction without changes. FLUX and Anima request raw prose; Krea2 uses the five-component breakdown and single-line comma-separated prompt described below. Z-Image and Qwen retain their original breakdowns/sections. Headings and code fences are preserved. The Qwen generation template uses the uploaded image only for Gemma's analysis: its copyable output describes the finished scene without downstream editing/reference instructions. Requested changes are expressed as final visual attributes. Detail follows scene complexity rather than a mandatory word count; composition, lighting, materials, palette and exact readable typography receive concrete descriptions.
 
 For **Qwen-Image-2.1**, Qwen3.5 uses its standalone descriptive-caption template and server generation defaults, returning plain text rather than JSON. It describes the image as-is, with change instructions disabled; Gemma still accepts optional changes.
 
@@ -225,13 +226,15 @@ Gemma remains **excluded from Ideogram by user choice**. A live feasibility eval
 
 If a required model is missing, generation is disabled instead of silently choosing an unrelated model. Clear the generator selection to restore the unfiltered image-mode model choices.
 
+**Krea2 generation format (image and words):** `KREA2_SYSTEM_PROMPT` uses the user-supplied five-part structure: **Medium & Style → Subject & Features → Lighting & Mood → Environment & Background → Framing & Composition**. It returns a structured breakdown followed by a **Ready-to-Copy Krea2 Prompt** text block containing one line of comma-separated phrases. Image requests preserve visible details unless changes are requested; text-only requests expand the description without pretending to see an image. Explicit aspect-ratio preferences and exact requested/readable writing are preserved. Medium-specific camera/render details replace the former mandatory photographic suffix. This applies to both local text writers, and to Gemma image analysis—not to folder LoRA captions. The Copy button still copies the full output; select the final line when only the ready-to-use prompt is wanted.
+
 ### From words
 
 Choose a target image generator and a local prompt-writing model, then describe the desired scene. No image is uploaded or required.
 
 | Target | Local models | Output |
 |---|---|---|
-| Krea2, Z-Image, FLUX.2 Klein, Anima, Qwen-Image-2.1 | GemmaUnseen (default) or Qwen3.5 | Generator-specific text prompt |
+| Krea2, Z-Image, FLUX.2 Klein, Anima, Qwen-Image-2.1, MOSS | GemmaUnseen (default) or Qwen3.5 | Generator-specific text prompt |
 | Ideogram 4 | Fibo (default) or Qwen3.5 | Validated JSON; native Fibo scene schema or Qwen's Ideogram schema |
 
 Generator rules are adapted to text-only scene creation, preserving your explicit details and requested writing while adding coherent visual details. Qwen's Ideogram path uses constrained decoding and the existing validator. Fibo uses its documented `<expand><full>` task with a **square (1.00) aspect-ratio default**, no image and native validation. Native Fibo JSON remains a different format; downstream Ideogram compatibility is not established merely by schema validation.
@@ -246,11 +249,12 @@ Choose a **Caption target**; **Krea2 remains the default**.
 |---|---|---|
 | Krea2, Z-Image, Qwen-Image-2.1, Anima | Qwen3.5 (default) or GemmaUnseen; Character/Style natural prose with a required trigger | `.txt` |
 | Ideogram 4 | Qwen3.5 only; as-is scene/style/composition JSON, with no LoRA type or trigger | `.json` |
+| MOSS-Image-Base | Qwen3.5 or GemmaUnseen; guide-format long/medium/short recaption JSON, without a LoRA type or trigger | `.json` |
 
 Prose captions never use comma-separated tags. Character excludes faces/fixed identity features; Style describes visible content and lets the set carry the shared aesthetic. Target-specific guidance adds appropriate spatial, material or illustration details without overriding those rules. Caption-model selection remains independent of single-image workflows; Ideogram never falls back to Gemma or Fibo.
 
 - Top-level PNG/JPEG/WebP/BMP images only; hidden files and subfolders are ignored.
-- Maximum **150 images**, **100 MB total**, **25 MB per image**.
+- Maximum **250 images**, **100 MB total**, **25 MB per image**.
 - Images are processed sequentially; the model starts/reuses once for the batch.
 - Prose skips matching `.txt` sidecars; Ideogram skips matching `.json` sidecars, case-insensitively. The other extension does not block generation.
 - Existing caption contents are not uploaded—only filenames are sent for skipping.
@@ -287,13 +291,35 @@ The light/dark toggle remembers your preference. Nunito Sans is fetched from Goo
 Examples with trigger `TOK`:
 
 - **Character:** `TOK wears a blue cotton jacket and stands beside a wooden fence. Soft light falls from the left, with a garden in the background.`
-- **Style:** `TOK depicts a cat curled on a red cushion beside a window. Afternoon sunlight illuminates the cushion, and a potted plant stands behind it.`
+- **Style:** `TOK style depicts a cat curled on a red cushion beside a window. Afternoon sunlight illuminates the cushion, and a potted plant stands behind it.`
 
 The Character/Style base rules are model-independent and shared by Qwen3.5 and GemmaUnseen; `build_folder_caption_request()` adds guidance for the chosen prose target. Gemma uses its existing multimodal adapter with reasoning disabled; no separate generation-style breakdown is requested for captions.
 
-Both require a nonempty **single-line trigger**, up to **200 characters**; surrounding input whitespace is trimmed while spelling/case are preserved. Captions missing the exact trigger-space prefix are reported as per-image failures and are not written. Natural-prose adherence and the exclusion of fixed features are model instructions, not reliable semantic validators: review captions before training. Existing `.txt` captions are skipped without inspecting or rewriting their contents; move old tag captions aside if you want to recaption them.
+Both require a nonempty **single-line trigger**, up to **200 characters**; surrounding input whitespace is trimmed while spelling/case are preserved. Style captions must start with `TRIGGER style depicts ` and name the actual subject separately, so the trigger cannot serve as the character's name. Character captions retain the `TRIGGER ` prefix. Captions missing the required prefix are reported as per-image failures and are not written. Natural-prose adherence and the exclusion of fixed features are model instructions, not reliable semantic validators: review captions before training. Existing `.txt` captions are skipped without inspecting or rewriting their contents; move old tag captions aside if you want to recaption them.
 
 The former generic Standard and comma-tag folder formats remain removed. Ideogram folder JSON is restored through Qwen's constrained decoder and existing validator. Single-image and From words workflows remain unchanged.
+
+### MOSS generation and recaptioning
+
+MOSS is an image-generator **target**, not another locally loaded model. Both existing prompt writers are available in all three tabs. Generation uses English natural-language positive prompts, preserving readable/requested scene text in its original script and requested line breaks. Experimental layout JSON and tag-stack output are not exposed. No negative prompt (including an automatic `nsfw` exclusion), sampler or CFG flags are appended to the positive prompt.
+
+For downstream MOSS generation, the supplied guide recommends 1M/1.5M/2M pixels, positive width/height multiples of 16, at least 50 steps, CFG 3–6 (default 3), shift 5 and Euler. These are settings for your image-generation workflow, **not** this application's VLM inference settings; optional SLG also belongs downstream.
+
+Folder output follows the supplied guide's recaption schema:
+
+```json
+{"caption":{"long":"Detailed visible scene and exact non-watermark text.","medium":"One-paragraph description.","short":"One-sentence description."},"watermark":[],"borders":["none"]}
+```
+
+- `caption.long`, `medium` and `short` must all be nonempty. Instructions preserve non-watermark text and its layout without translation/normalization, and exclude watermarks from all caption fields.
+- Each watermark entry has `box_2d` (ordered integer **0–1000 normalized** `[y_min,x_min,y_max,x_max]`) and a nonempty `label`. These are **not** the guide's experimental centered absolute-pixel layout coordinates.
+- `borders` contains unique `left`, `right`, `up` and/or `down`, or `["none"]` alone.
+- Schema, duplicate keys, box ordering/ranges and border consistency are validated. Invalid/truncated output fails per image; it does not produce a sidecar.
+- There is no original-caption reference input. Matching `.json` filenames are skipped without reading their contents. Move existing JSON captions aside when changing between MOSS and Ideogram schemas.
+
+**Deliberate inference deviation:** the guide recommends thinking-enabled requests with 16,384 output tokens and larger Qwen variants. This implementation keeps thinking off and bounded budgets: 2,000 output tokens for Gemma and 4,096 for Qwen recaption JSON, with a 300-second timeout. No model/YAML budgets are changed. Large text-heavy images may exceed these budgets and fail rather than return partial JSON.
+
+Both models completed local prose/image/recaption smoke requests, but schema validity does not establish caption fidelity. Watermark classification/exclusion, border detection, OCR and box accuracy remain review points; initial smoke outputs showed such mistakes. No downstream MOSS image-quality comparison has been performed.
 
 ### Ideogram caption schema
 
@@ -422,6 +448,7 @@ All templates live in `src/prompting_pot/prompts.py`; external reference scripts
 | Gemma image prompts / folder captions (`gemma_unseen.py`) | Generator or Krea2 LoRA system prompt plus image/instructions; temperature 0.7, 2000 output tokens, reasoning off, 300-second timeout |
 | Qwen text captions (`captioning.py`) | Image/instructions; generation settings left to the server, 300-second timeout |
 | Qwen Ideogram JSON | Same caption adapter; schema-constrained 4096-token request with reasoning off, 300-second timeout |
+| MOSS recaption JSON (`captioning.py`) | Schema-constrained; Gemma 2000 tokens / temperature 0.7, Qwen 4096 tokens / server sampling defaults; explicit thinking-off template flag, 300-second timeout |
 | Fibo (`fibo.py`) | RGB PNG, image before `<caption><full>`, no system message; temperature 1.0, top_p 0.95, top_k 20, min_p 0, 4096 output tokens, direct answers, 3600-second timeout |
 
 Fibo sends `special: true` and `skip_special_tokens: false`. `fibo_schema.py` vendors native validation/token processing, omitting the unused NumPy mask-rasterization helper. Invalid, duplicate-key, nonfinite or truncated native JSON fails rather than returning a partial result.
@@ -437,7 +464,7 @@ Interactive documentation: `/docs`.
 - `GET /api/targets`: registered IDs/names with `vision`, `captioning`, `image_generators`, `analysis_only` and `text` workflow flags. Folder captioning accepts registered vision-capable `Captioning` and `GemmaUnseen` models only.
 - `GET /api/image-generators`: available generator IDs/display names, including `ideogram4`. The UI keeps the full generator list visible and filters the model dropdown; the backend checks model/generator compatibility.
 - `POST /api/generate`: multipart `target_id`, `mode` (`image` / `text`), `description`, required `image_generator` in both modes, and required `image` only in image mode. Text mode rejects uploaded images and incompatible model/generator choices. Qwen/Fibo as-is single-image analysis rejects change instructions.
-- `POST /api/caption`: multipart `target_id` (`Captioning` or `GemmaUnseen`, vision-capable only), repeated `images`, `caption_generator` (`krea2` default, `zimage`, `qwen-image-2.1`, `anima`, `ideogram4`), `existing_captions` (JSON list of flat filenames matching the selected `.txt`/`.json` extension), and `caption_style`. Prose requires `character` (default) or `style` plus `trigger_word`; Ideogram requires `ideogram4`, Qwen and an empty trigger. Invalid combinations return 422 before startup. By default, returns a ZIP of `.txt`/`.json` captions and the manifest, with `X-captioned`, `X-skipped` and `X-failed` headers. With `Accept: application/x-ndjson` (used by the UI), streams newline-delimited `stage`, `progress` and terminal `complete` / `error` events. Progress carries processed/total counts, filename and outcome counts; completion carries counts and a base64-encoded ZIP that the browser decodes into the normal download. Input validation still returns ordinary HTTP errors; failures after streaming begins use an `error` event. No persistent jobs/files are created. Reverse proxies must allow unbuffered streaming.
+- `POST /api/caption`: multipart `target_id` (`Captioning` or `GemmaUnseen`, vision-capable only), repeated `images`, `caption_generator` (`krea2` default, `zimage`, `qwen-image-2.1`, `anima`, `ideogram4`, `moss`), `existing_captions` (JSON list of flat filenames matching the selected `.txt`/`.json` extension), and `caption_style`. Prose requires `character` (default) or `style` plus `trigger_word`; Ideogram requires `ideogram4`, Qwen and an empty trigger. MOSS requires `moss`, either writer and an empty trigger; it uses its separate recaption schema. Invalid combinations return 422 before startup. By default, returns a ZIP of `.txt`/`.json` captions and the manifest, with `X-captioned`, `X-skipped` and `X-failed` headers. With `Accept: application/x-ndjson` (used by the UI), streams newline-delimited `stage`, `progress` and terminal `complete` / `error` events. Progress carries processed/total counts, filename and outcome counts; completion carries counts and a base64-encoded ZIP that the browser decodes into the normal download. Input validation still returns ordinary HTTP errors; failures after streaming begins use an `error` event. No persistent jobs/files are created. Reverse proxies must allow unbuffered streaming.
 - Generation success: `{"output": "prompt text or serialized JSON"}` or `{"output": {"general": {}, "objects": []}}` for native structured output. These illustrate response shapes, not fabricated model results.
 - Errors use FastAPI's standard `detail` field; batch inference/image failures are recorded per image in the manifest.
 
@@ -499,6 +526,7 @@ GitHub commits also publish your Git author name/email. Review your identity bef
 
 - [Supplied Qwen-Image-2.1 guide](Qwen21_Editguide.pdf): generation-template refinements draw on pages 11–16, 20–22, 25 and 27. Editing/multi-reference commands are deliberately excluded. The update has prompt-contract/regression tests; better downstream Qwen image quality remains to be established with comparison testing.
 
+- MOSS rules are based on the user-supplied **MOSS-Image-Base User Guide**: natural-language generation and the post-training recaption JSON schema. Experimental layout enhancement is deferred.
 - [Fibo supported tasks](https://huggingface.co/briaai/fibo-scene-analyzer): documents text-only scene expansion.
 - [Fibo GGUF usage](https://huggingface.co/briaai/fibo-scene-analyzer-gguf): documents `<expand>` support on llama.cpp.
 - [Ideogram 4 prompting guide](https://github.com/ideogram-oss/ideogram4/blob/main/docs/prompting.md)

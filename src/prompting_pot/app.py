@@ -91,7 +91,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 def supported_image_generators(target: Target) -> list[str]:
     """Expose compatible single-image generators for each local vision model."""
     if target.id == CAPTION_MODEL_ID:
-        return ["ideogram4", "qwen-image-2.1"]
+        return ["ideogram4", "qwen-image-2.1", "moss"]
     return ["ideogram4"] if target.id == "Fibo" else [key for key in IMAGE_GENERATORS if key != "ideogram4"]
 
 
@@ -118,7 +118,7 @@ async def generate_prompt(
     if mode == "caption":
         if image is None or image_content_type is None:
             raise ValueError("Captioning requires an image.")
-        if target.id == "GemmaUnseen":
+        if target.id == "GemmaUnseen" and caption_style != "moss":
             return await generate_from_image(
                 base_url=base_url, model=target.id, system_prompt=prompt,
                 description=description, image=image, content_type=image_content_type,
@@ -176,7 +176,7 @@ async def generate(
     description = description.strip()
     if target.id == "Fibo" and mode == "image" and description:
         raise HTTPException(422, "Fibo supports single-image as-is analysis only, without change instructions.")
-    if target.id == CAPTION_MODEL_ID and mode == "image" and description:
+    if target.id == CAPTION_MODEL_ID and mode == "image" and image_generator != "moss" and description:
         raise HTTPException(422, "Qwen caption analysis describes the image as-is, without change instructions.")
     if mode == "text":
         allowed = {"Fibo", CAPTION_MODEL_ID} if image_generator == "ideogram4" else {"GemmaUnseen", CAPTION_MODEL_ID}
@@ -206,7 +206,7 @@ async def generate(
             output = await generate_prompt(base_url=base_url, target=target, mode=mode,
                                            description=description,
                                            prompt=(FIBO_CAPTION_PROMPT if target.id == "Fibo" else
-                                                   build_caption_request(image_generator)[0] if mode == "image" and target.id == CAPTION_MODEL_ID else
+                                                   build_caption_request(image_generator)[0] if mode == "image" and target.id == CAPTION_MODEL_ID and image_generator in {"ideogram4", "qwen-image-2.1"} else
                                                    build_image_prompt(image_generator) if mode == "image"
                                                    else build_text_prompt(image_generator)), image=content,
                                            image_content_type=content_type,
@@ -232,8 +232,11 @@ async def caption_folder(
         raise HTTPException(422, "Captioning requires registered Qwen3.5 Captioning (Captioning) or GemmaUnseen with vision support.")
     if caption_generator not in FOLDER_GENERATORS:
         raise HTTPException(422, "Select a supported folder caption generator.")
-    json_caption = caption_generator == "ideogram4"
-    if json_caption:
+    json_caption = caption_generator in {"ideogram4", "moss"}
+    if caption_generator == "moss":
+        if caption_style != "moss" or trigger_word.strip():
+            raise HTTPException(422, "MOSS recaptioning requires the moss style and no trigger.")
+    elif json_caption:
         if target.id != CAPTION_MODEL_ID or caption_style != "ideogram4" or trigger_word.strip():
             raise HTTPException(422, "Ideogram folder captions require Qwen, the ideogram4 style and no trigger.")
     else:
@@ -265,16 +268,18 @@ async def caption_folder(
                 if not isinstance(output, str):
                     raise ValueError("The caption model must return prose or serialized JSON.")
                 output = output.strip()
-                if not json_caption and not output.startswith(trigger_word + ' '):
-                    raise ValueError("The caption must begin with the exact trigger word followed by a space and prose.")
+                if not json_caption:
+                    prefix = trigger_word + (' style depicts ' if caption_style == 'style' else ' ')
+                    if not output.startswith(prefix):
+                        raise ValueError(f"The caption must begin with {prefix!r}; Style triggers label the aesthetic, not the subject.")
                 return output
 
             if pending:
                 if on_progress is not None:
                     await on_progress({"type": "stage", "message": "Starting or reusing your local model…"})
                 async with inference_session(target) as base_url:
-                    return await caption_batch(images, existing, infer, suffix=suffix, on_progress=on_progress)
-            return await caption_batch(images, existing, infer, suffix=suffix, on_progress=on_progress)
+                    return await caption_batch(images, existing, infer, suffix=suffix, caption_style=caption_style, on_progress=on_progress)
+            return await caption_batch(images, existing, infer, suffix=suffix, caption_style=caption_style, on_progress=on_progress)
         except NotImplementedError as exc:
             raise HTTPException(501, str(exc)) from exc
         finally:

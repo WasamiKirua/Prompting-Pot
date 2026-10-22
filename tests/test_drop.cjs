@@ -429,6 +429,50 @@ test('Ideogram folder mode does not fall back to Gemma when Qwen is missing', ()
   assert.match(element('capability').textContent, /Configure Qwen3.5/);
 });
 
+test('MOSS image and words offer both writers; Qwen image changes remain enabled', async () => {
+  for (const mode of ['image', 'text']) {
+    let request;
+    const { element, context } = setup((url, options) => {
+      if (url !== '/api/generate') return new Promise(() => {});
+      request = options;
+      return Promise.resolve({ok: true, json: async () => ({output: 'A detailed MOSS prompt.'})});
+    });
+    vm.runInContext(`mode = '${mode}'; targets = [{id: 'GemmaUnseen', vision: true, text: true}, {id: 'Captioning', vision: true, text: true, analysis_only: true, image_generators: ['moss', 'ideogram4']}, {id: 'Fibo', vision: true}]; imageGenerators = [{id: 'moss', name: 'MOSS'}]`, context);
+    element('image-generator').value = 'moss'; element('image-generator').onchange();
+    assert.deepEqual(element('target').options.map(o => o.value), ['GemmaUnseen', 'Captioning']);
+    element('target').value = 'Captioning'; element('target').onchange();
+    assert.equal(element('changes').disabled, false);
+    element('changes').value = 'Make it blue.'; element('description').value = 'Make it blue.';
+    element('image').files = [new Blob(['image'], {type: 'image/png'})];
+    await element('form').onsubmit(event());
+    assert.equal(request.body.get('description'), 'Make it blue.');
+    assert.equal(element('format').textContent, 'TEXT');
+    assert.equal(element('download').hidden, true);
+  }
+});
+
+test('MOSS folders use JSON with both models and no trigger or LoRA controls', async () => {
+  let request;
+  const { element, context } = setup((url, options) => {
+    if (url !== '/api/caption') return new Promise(() => {});
+    request = options;
+    return Promise.resolve({ok: true, blob: async () => new Blob(['zip']), headers: {get: () => '1'}});
+  });
+  vm.runInContext("targets = [{id: 'GemmaUnseen', vision: true, captioning: true}, {id: 'Captioning', vision: true, captioning: true}]", context);
+  element('mode-caption').onclick();
+  element('caption-generator').value = 'moss'; element('caption-generator').onchange();
+  assert.deepEqual(element('target').options.map(o => o.value), ['GemmaUnseen', 'Captioning']);
+  assert.equal(element('caption-prose-fields').hidden, true);
+  assert.equal(element('trigger-word').required, false);
+  assert.match(element('caption-file-help').textContent, /long\/medium\/short/);
+  element('trigger-word').value = 'stale trigger';
+  element('folder').files = [Object.assign(new Blob(['image']), {name: 'image.png', webkitRelativePath: 'dataset/image.png'})];
+  element('folder').onchange(); await element('form').onsubmit(event());
+  assert.equal(request.body.get('caption_generator'), 'moss');
+  assert.equal(request.body.get('caption_style'), 'moss');
+  assert.equal(request.body.get('trigger_word'), '');
+});
+
 test('folder upload permits 25 MB per image but retains the 100 MB total limit', async () => {
   for (const [size, count, allowed] of [[25 * 1024 * 1024, 1, true], [25 * 1024 * 1024 + 1, 1, false], [25 * 1024 * 1024, 5, false]]) {
     let uploaded = false;
@@ -451,8 +495,8 @@ test('folder upload permits 25 MB per image but retains the 100 MB total limit',
   }
 });
 
-test('folder upload accepts 150 images and rejects 151 before uploading', async () => {
-  for (const count of [150, 151]) {
+test('folder upload accepts 250 images and rejects 251 before uploading', async () => {
+  for (const count of [250, 251]) {
     let uploaded = false;
     const { element, context } = setup(url => {
       if (url !== '/api/caption') return new Promise(() => {});
@@ -464,8 +508,8 @@ test('folder upload accepts 150 images and rejects 151 before uploading', async 
     element('folder').files = Array.from({length: count}, (_, i) => Object.assign(new Blob(['image']), {name: `${i}.png`, webkitRelativePath: `dataset/${i}.png`}));
     element('folder').onchange();
     await element('form').onsubmit(event());
-    assert.equal(uploaded, count === 150);
-    if (count === 151) assert.match(element('status').textContent, /1–150/);
+    assert.equal(uploaded, count === 250);
+    if (count === 251) assert.match(element('status').textContent, /1–250/);
   }
 });
 
