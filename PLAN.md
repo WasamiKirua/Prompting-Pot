@@ -125,6 +125,11 @@
 - [x] Verify typing/lint and unchanged lifecycle/YAML checksums.
 - [ ] User: evaluate tag quality and exact trigger adherence with real model images.
 
+## Restore accidentally removed MOSS and Style fixes
+- [x] Inspect all local diffs; confirm they remove MOSS and revert Style-trigger handling, without unrelated changes.
+- [x] Save a private temporary recovery patch and restore only affected files from commit 5408cca; leave index/history/configuration untouched.
+- [x] Verify 308 backend + 43 frontend tests, JavaScript syntax and whitespace checks.
+
 ## Style LoRA trigger role correction
 - [x] Require Style prose to start with TRIGGER style depicts and name the actual subject separately; prohibit interpreting the style trigger as a character.
 - [x] Apply the shared rule to Qwen/Gemma and all prose folder targets; keep Character and JSON caption paths unchanged.
